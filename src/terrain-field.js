@@ -298,6 +298,37 @@ export const routes = [
   route([-4, 12], [290, -180], 2.3, 0.7),
   route([-6, -30], [-310, -260], 1.7, 0.45),
 ];
+// Cleared verge, built once from the road curves for indexed tree lookups.
+const roadVerge = new Uint8Array(N * N);
+routes.forEach((path, routeIndex) => {
+  const radius = [4.2, 2.3, 1.7][routeIndex] + 5;
+  const steps = Math.ceil(radius / CELL);
+  for (const [px, pz] of path) {
+    const [gx, gz] = gridPoint([px, pz]);
+    for (let z = Math.max(0, gz - steps); z <= Math.min(N - 1, gz + steps); z++)
+      for (
+        let x = Math.max(0, gx - steps);
+        x <= Math.min(N - 1, gx + steps);
+        x++
+      )
+        if (
+          Math.hypot(
+            x * CELL - TERRAIN_SIZE / 2 - px,
+            z * CELL - TERRAIN_SIZE / 2 - pz,
+          ) < radius
+        )
+          roadVerge[z * N + x] = 1;
+  }
+});
+export function inRoadVerge(x, z) {
+  return (
+    sampleGrid(
+      roadVerge,
+      (x + TERRAIN_SIZE / 2) / CELL,
+      (z + TERRAIN_SIZE / 2) / CELL,
+    ) > 0.01
+  );
+}
 // Compact heavily used soil slightly; the terrain and material mask share this result.
 for (let i = 0; i < heights.length; i++) heights[i] -= 0.12 * traffic[i];
 export function terrainSample(x, z) {

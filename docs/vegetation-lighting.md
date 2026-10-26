@@ -42,3 +42,21 @@ References:
 Local verification includes delayed grass residency and long paused-frame handoffs, age-dependent moss coverage, topology and finite attributes, habitat/worker parity, and streamed voxel indexing. Browser rendering was checked in WebGPU and WebGL2 with morning, midday and evening settings. Warm-cache first-scene readiness was around 14-16 seconds in the measured sessions. The complete 300 m grass ring still has asynchronous preparation cost; worker cache retrieval is typically below a few milliseconds, but that is not end-to-end tile residency latency. No tests were added to GitHub Actions.
 
 The night pass was also rendered in WebGPU and WebGL2. Both reported a running 32 x 48 x 24 fire simulation and completed asynchronous emission reductions without runtime errors. Moon/stars, the restored road blend, and the wrapped torch were inspected in-browser. These are functional/visual checks, not a controlled FPS benchmark or a claim of photographic fire fidelity.
+
+## Streamed lighting at night
+
+Outside the resident voxel volume, diffuse fallback radiance now uses the bake's sky/daylight response and persistent canopy shelter. Moon and distant sun visibility use that same whole-world shelter field. Detailed local occlusion still comes from the resident voxels, with the existing spatial blend at their boundary. Cached occupancy and transport are reused; cached radiance snapshots are never displayed in place of the current sun/torch pass. New regions are relit after cache awaits using live light state.
+
+The local browser fixture `/scripts/night-boundary.html?backend=webgpu` (or `webgl2`) checks loaded, blended and distant samples at night, twilight and day, across open/wooded areas and a moved volume. All 24 pixel comparisons passed on each backend. This fixture is not added to Actions.
+
+Canopy shelter shares the existing root-mask binding (R root wear / G canopy), keeping terrain within the default 16 sampled-texture limit. The packed RG8 texture also uses half the storage of the old R32F root-only field.
+
+## Roadside torches
+
+Freestanding timber torches follow one verge at 18 m arc-length intervals. Placement traces the terrain's actual traffic mask to the dirt edge, then adds a 35 cm setback. Junction crowding and trunk obstructions skip a site instead of scattering it into the woodland. The wrapped head is 3.8-4.2 m above ground; the flame volume reaches about 4.6-5 m. Timber, cloth and iron collars are instanced in 128 m spatial pages.
+
+A bounded pool renders up to 48 nearby volumetric flames, normally fading from 300-400 m (sooner where a junction fills the pool). They share the carried torch's GPU heat/fuel simulation and emission readback. Twelve reusable point lights illuminate nearby terrain/vegetation, attenuating over 24 m and fading by camera distance from 100-160 m. Light intensity and colour follow the simulated fire energy and temperature. These roadside sources currently provide direct light without individual shadow maps or a separate indirect-light bake. This avoids hundreds of independent simulations and shadow passes; it is not a claim of complete multi-source GI.
+
+`node scripts/verify-road-torches.mjs` checks actual-world verge placement, trunk clearance, ground contact, height and route-spacing invariance. No Actions tests were added.
+
+Trees now reserve a cleared verge around each route (road width plus 5 m, sampled from a precomputed grid); logs crossing that verge are excluded as well. Filtering after generation preserves tree seeds away from roads, and the world cache version is advanced. Distant torch glows use one depth-tested instanced draw, fading between 650 and 900 m, while nearby flames remain volumetric.

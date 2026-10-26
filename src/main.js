@@ -268,7 +268,6 @@ const lampOrb = new T.Mesh(
 );
 lampOrb.visible = false;
 scene.add(lampOrb);
-const nightWorld = createNightWorld(scene, camera, lightUniforms, renderer);
 const sunDirection = new T.Vector3(),
   sky = new Sky();
 sky.scale.setScalar(7000);
@@ -395,6 +394,13 @@ updateSunShadow(true);
 const cache = new BakeCache(),
   world = makeWorld();
 applyTreeInfluence(world.trees);
+const nightWorld = createNightWorld(
+  scene,
+  camera,
+  lightUniforms,
+  renderer,
+  world.trees,
+);
 bakeMossEnvironment();
 let clusters = [],
   grass = null,
@@ -995,6 +1001,7 @@ function animate(now) {
     torch: torchActive,
     moon: 1 - lightUniforms.daylight.value,
     fire: nightWorld.fireStats,
+    roadTorches: nightWorld.roadStats,
   };
   lampOrb.visible = dynamic && !torchActive;
   if (!torchActive) lamp.intensity = dynamic ? 700 : 0;

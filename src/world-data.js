@@ -3,10 +3,11 @@ import {
   terrainHeight,
   terrainSample,
   terrainSamplingGLSL,
+  inRoadVerge,
 } from "./terrain-field.js";
 import { TREE_TYPES } from "./plant-catalog.js";
 import { patchNoise, woodlandHabitat } from "./habitat.js";
-export const WORLD_VERSION = "woodland-16km-communities-16";
+export const WORLD_VERSION = "woodland-16km-road-verges-17";
 export function random(seed) {
   return () => {
     seed |= 0;
@@ -106,5 +107,24 @@ export function makeWorld() {
       }
       clusters.push({ id: cz * 32 + cx, x, z, trees: items });
     }
-  return { clusters, trees, deadwood, seed: 851 };
+  // Preserve seeds and positions away from roads by filtering after generation.
+  const allowed = (t) => !inRoadVerge(t.x, t.z);
+  for (const cluster of clusters) cluster.trees = cluster.trees.filter(allowed);
+  return {
+    clusters,
+    trees: trees.filter(allowed),
+    deadwood: deadwood.filter(
+      (t) =>
+        allowed(t) &&
+        !inRoadVerge(
+          t.x + Math.cos(t.rotation) * t.length,
+          t.z + Math.sin(t.rotation) * t.length,
+        ) &&
+        !inRoadVerge(
+          t.x - Math.cos(t.rotation) * t.length,
+          t.z - Math.sin(t.rotation) * t.length,
+        ),
+    ),
+    seed: 851,
+  };
 }

@@ -1,7 +1,11 @@
 import { cloudAt, CLOUD_SHADOW_STRENGTH } from "./clouds.js";
 import { DirectionalLight, DirectionalLightNode } from "three/webgpu";
 import * as N from "three/tsl";
-import { sampleVolume } from "./tsl-materials.js";
+import {
+  sampleVolume,
+  sampleRadiance,
+  distantSkyVisibility,
+} from "./tsl-materials.js";
 import { ref } from "./tsl-baking.js";
 export class VoxelSun extends DirectionalLight {}
 export class VoxelMoon extends DirectionalLight {}
@@ -13,11 +17,9 @@ export function installVoxelSun(renderer, uniforms) {
     setupDirect(builder) {
       const direct = super.setupDirect(builder);
       if (builder.material.userData.shading) {
-        const visibility = sampleVolume(
+        const visibility = sampleRadiance(
           uniforms,
-          "bakedAtlas",
           N.positionWorld.add(N.vec3(0, 1.2, 0)),
-          [0.12, 0.16, 0.2, 1],
         ).a;
         direct.lightColor = direct.lightColor.mul(
           N.mix(1, visibility, ref(uniforms, "bakedEnabled")),
@@ -45,7 +47,7 @@ export function installVoxelSun(renderer, uniforms) {
         uniforms,
         "directionAtlas",
         N.positionWorld,
-        [0.5, 1, 0.5, 1],
+        N.vec4(0.5, 1, 0.5, distantSkyVisibility(uniforms, N.positionWorld)),
       ).a;
       const cloud = cloudAt(
         uniforms,

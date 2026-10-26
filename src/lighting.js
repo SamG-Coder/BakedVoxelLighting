@@ -10,6 +10,7 @@ import { digest } from "./cache.js";
 import {
   TERRAIN_SIZE,
   rootInfluence,
+  canopyInfluence,
   terrainPixels,
   terrainSample,
   TERRAIN_GRID,
@@ -23,12 +24,15 @@ export const terrainTexture = new T.DataTexture(
   T.FloatType,
 );
 terrainTexture.needsUpdate = true;
+// R: root wear, G: persistent canopy shelter. Two UNORM channels keep this
+// smaller than the old single float channel and reuse one terrain binding.
+const rootCanopyPixels = new Uint8Array(TERRAIN_GRID * TERRAIN_GRID * 2);
 const rootTexture = new T.DataTexture(
-  rootInfluence,
+  rootCanopyPixels,
   TERRAIN_GRID,
   TERRAIN_GRID,
-  T.RedFormat,
-  T.FloatType,
+  T.RGFormat,
+  T.UnsignedByteType,
 );
 rootTexture.minFilter = rootTexture.magFilter = T.LinearFilter;
 rootTexture.needsUpdate = true;
@@ -369,7 +373,12 @@ export async function bakeVolume(
   lightUniforms.directionAtlas.value = directionMap;
   lightUniforms.volumeMin.value.copy(origin);
   lightUniforms.bakeDims.value.copy(dims);
-  refreshLighting(renderer, sun);
+  refreshLighting(
+    renderer,
+    lightUniforms.liveSunDirection.value,
+    lightUniforms.liveLampPosition.value,
+    lightUniforms.liveLampPower.value,
+  );
   lightUniforms.bakedEnabled.value = 1;
   lightingState.geometryKey = geometryKey;
   lightingState.n = n;
@@ -389,24 +398,25 @@ export async function bakeVolume(
     0.24,
   );
   if (!record) {
-    refreshLighting(renderer, sun);
+    refreshLighting(
+      renderer,
+      lightUniforms.liveSunDirection.value,
+      lightUniforms.liveLampPosition.value,
+      lightUniforms.liveLampPower.value,
+    );
     const data = new Uint8Array(((n * n * n) / 2) * 4);
     await readPixels(renderer, target, 0, 0, n, (n * n) / 2, data);
     record = { data, n, key };
     await cache.put(key, record);
-  } else {
-    const texture = new T.DataTexture(
-      record.data,
-      n,
-      (n * n) / 2,
-      T.RGBAFormat,
-    );
-    texture.minFilter = texture.magFilter = T.LinearFilter;
-    texture.needsUpdate = true;
-    await uploadTextures(renderer, [texture]);
-    active.cachedTexture = texture;
-    lightUniforms.bakedAtlas.value = texture;
   }
+  // Cache occupancy and transport, but never present a radiance snapshot from
+  // another time/light state. Regenerate this cheap pass after any cache await.
+  refreshLighting(
+    renderer,
+    lightUniforms.liveSunDirection.value,
+    lightUniforms.liveLampPosition.value,
+    lightUniforms.liveLampPower.value,
+  );
   return {
     key,
     ms: performance.now() - start,
@@ -456,6 +466,15 @@ export function voxelProbe(position) {
 
 // Persistent habitat data, independent of the current sun or streamed light volume.
 export function bakeMossEnvironment() {
+  for (let i = 0; i < rootInfluence.length; i++) {
+    rootCanopyPixels[i * 2] = Math.round(
+      Math.max(0, Math.min(1, rootInfluence[i])) * 255,
+    );
+    rootCanopyPixels[i * 2 + 1] = Math.round(
+      Math.max(0, Math.min(1, canopyInfluence[i])) * 255,
+    );
+  }
+  rootTexture.needsUpdate = true;
   const size = 256,
     data = new Uint8Array(size * size * 4);
   for (let z = 0; z < size; z++)

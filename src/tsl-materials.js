@@ -51,9 +51,30 @@ export function sampleVolume(U, name, p, fallback) {
     origin: ref(U, "volumeMin", "vec3"),
     extent: ref(U, "volumeSize", "vec3"),
     dims: ref(U, "bakeDims", "vec3"),
-    fallback: N.vec4(...fallback),
+    fallback: Array.isArray(fallback) ? N.vec4(...fallback) : fallback,
     flipY,
   });
+}
+// Whole-world canopy data remains available beyond the streamed voxel box.
+// Match the radiance bake's sky/day response instead of returning daytime RGB.
+export function distantSkyVisibility(U, p) {
+  const canopy = texRef(U, "rootField").sample(p.xz.add(2000).div(4000)).g;
+  return N.exp(canopy.mul(-1.8));
+}
+export function distantRadiance(U, p) {
+  const sky = distantSkyVisibility(U, p);
+  const ambient = N.vec3(0.035, 0.055, 0.085).mul(sky.mul(0.85).add(0.15));
+  const bounce = N.vec3(0.012, 0.018, 0.008)
+    .mul(N.float(1).sub(sky))
+    .mul(ref(U, "sunColour", "vec3"))
+    .mul(0.8);
+  return N.vec4(
+    ambient.add(bounce).mul(ref(U, "daylight").mul(0.96).add(0.04)),
+    sky,
+  );
+}
+export function sampleRadiance(U, p) {
+  return sampleVolume(U, "bakedAtlas", p, distantRadiance(U, p));
 }
 const fullFade = new T.Vector2(0, 1);
 const fadeRange = N.uniform(fullFade).onObjectUpdate(
@@ -276,7 +297,7 @@ function createDecorated(original, options, U, grid) {
     const wn = K.grassNormal({ detail, yaw: yawNode() });
     m.normalNode = N.normalize(N.cameraViewMatrix.mul(N.vec4(wn, 0)).xyz);
   }
-  const bake = (p) => sampleVolume(U, "bakedAtlas", p, [0.12, 0.16, 0.2, 1]);
+  const bake = (p) => sampleRadiance(U, p);
   const bent = sampleVolume(
     U,
     "directionAtlas",
