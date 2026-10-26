@@ -14,11 +14,53 @@ import { prepareForRender } from "./renderer-jobs.js";
 // its first shadow draw. Allocate the render attachment before shader bindings
 // capture it; otherwise the first draw replaces/destroys the sampled GPU image.
 export class ResidentPointShadow extends PointShadowNode {
+  constructor(light) {
+    super(light);
+    this.useCasterList = true;
+    this.casterRoots = [];
+  }
   setupRenderTarget(shadow, builder) {
     const result = super.setupRenderTarget(shadow, builder);
     builder.renderer.initRenderTarget(result.shadowMap);
     return result;
   }
+  renderShadow(frame) {
+    if (!this.useCasterList) return super.renderShadow(frame);
+    const scene = frame.scene;
+    const children = scene.children;
+    collectShadowRoots(scene, this.casterRoots);
+    // Six cube faces were traversing every non-casting grass/terrain/sky object.
+    // Use the same objects, parents, world matrices, materials and scene identity;
+    // only the roots submitted to the six shadow traversals are narrowed.
+    scene.children = this.casterRoots;
+    try {
+      super.renderShadow(frame);
+    } finally {
+      scene.children = children;
+    }
+  }
+}
+
+export function collectShadowRoots(scene, roots) {
+  roots.length = 0;
+  const visit = (object) => {
+    if (!object.visible) return;
+    // Preserve containers whose traversal carries rendering semantics. A caster
+    // with children remains intact so its descendants cannot be submitted twice.
+    if (
+      object.castShadow ||
+      object.isLOD ||
+      object.isBundleGroup ||
+      object.isClippingGroup ||
+      (object.isGroup && object.renderOrder !== 0)
+    ) {
+      roots.push(object);
+      return;
+    }
+    for (const child of object.children) visit(child);
+  };
+  if (scene.visible) for (const child of scene.children) visit(child);
+  return roots;
 }
 
 // Stable, minimal depth materials avoid the shared override material being rebuilt

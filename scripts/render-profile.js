@@ -180,3 +180,100 @@ const hide = document.createElement("button");
 hide.textContent = "Hide profile";
 panel.prepend(hide);
 hide.onclick = () => (panel.style.display = "none");
+const cpuButton = document.createElement("button");
+cpuButton.textContent = "CPU breakdown";
+panel.prepend(cpuButton);
+cpuButton.onclick = async () => {
+  if (running) return;
+  running = true;
+  w.capture.pause();
+  const totals = {},
+    undo = [];
+  function instrument(owner, key, label) {
+    const original = owner[key];
+    if (typeof original !== "function") return;
+    let depth = 0;
+    totals[label] = { ms: 0, calls: 0 };
+    owner[key] = function (...args) {
+      const root = depth++ === 0,
+        t = root ? performance.now() : 0;
+      try {
+        return original.apply(this, args);
+      } finally {
+        depth--;
+        if (root) {
+          totals[label].ms += performance.now() - t;
+          totals[label].calls++;
+        }
+      }
+    };
+    undo.push(() => (owner[key] = original));
+  }
+  for (const [owner, key, label] of [
+    [w.renderer, "_projectObject", "traversal"],
+    [w.renderer._objects, "get", "objectLookup"],
+    [w.renderer._objects, "createRenderObject", "objectCreation"],
+    [w.renderer._nodes, "needsRefresh", "refreshCheck"],
+    [w.renderer._nodes, "updateForRender", "nodeUpdates"],
+    [w.renderer._bindings, "updateForRender", "bindings"],
+    [w.renderer._pipelines, "updateForRender", "pipelines"],
+    [w.renderer._geometries, "updateForRender", "geometryUpdates"],
+    [w.renderer.backend, "draw", "drawSubmit"],
+  ])
+    instrument(owner, key, label);
+  try {
+    let t = performance.now() / 1000;
+    for (let i = 0; i < 60; i++) {
+      await new Promise(requestAnimationFrame);
+      w.capture.render(t + i / 60);
+    }
+    result = {
+      cpuBreakdown: Object.fromEntries(
+        Object.entries(totals).map(([k, v]) => [
+          k,
+          { ms: v.ms / 60, calls: v.calls / 60 },
+        ]),
+      ),
+      lastFrame: d.renderProfile,
+      errors,
+    };
+  } finally {
+    undo.forEach((fn) => fn());
+    w.capture.resume();
+    running = false;
+  }
+};
+
+const cpuCompare = document.createElement("button");
+cpuCompare.textContent = "Compare CPU";
+panel.prepend(cpuCompare);
+cpuCompare.onclick = async () => {
+  if (running) return;
+  const shadow = w.lamp.shadow.shadowNode;
+  const original = shadow.useCasterList;
+  const runs = [];
+  try {
+    // Reverse the order for the second pair to reduce warmup/order bias.
+    for (const optimized of [false, true, true, false]) {
+      shadow.useCasterList = optimized;
+      await buttons.Benchmark.onclick();
+      if (!result) throw Error("CPU benchmark did not finish");
+      runs.push({ optimized, ...structuredClone(result) });
+    }
+    const mean = (optimized, key) =>
+      runs
+        .filter((r) => r.optimized === optimized)
+        .reduce((sum, r) => sum + r[key], 0) / 2;
+    result = {
+      comparison:
+        "Same resident scene; only shadow traversal changed; ABBA order",
+      beforeCpuMs: mean(false, "cpuMs"),
+      afterCpuMs: mean(true, "cpuMs"),
+      runs,
+    };
+  } catch (e) {
+    result = { error: String(e), runs };
+  } finally {
+    shadow.useCasterList = original;
+  }
+};
