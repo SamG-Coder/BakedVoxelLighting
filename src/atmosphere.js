@@ -22,10 +22,11 @@ export function createAtmosphere(renderer, scene, camera, U) {
     const length = N.min(delta.length(), 160);
     const ray = delta.normalize();
     const sun = ref(U, "liveSunDirection", "vec3");
-    const phase = N.pow(N.max(ray.dot(sun), 0), 6)
-      .mul(2.4)
-      .add(0.12);
+    const phase = N.pow(N.max(ray.dot(sun), 0), 24)
+      .mul(1.2)
+      .add(0.015);
     const sum = N.vec3(0).toVar();
+    const opticalDepth = N.float(0).toVar();
     const cloud = N.float(1).sub(
       cloudAt(U, eye, sun).mul(CLOUD_SHADOW_STRENGTH),
     );
@@ -39,17 +40,29 @@ export function createAtmosphere(renderer, scene, camera, U) {
         N.smoothstep(0, 0.1, edge.y),
       );
       const visibility = sampleVolume(U, "bakedAtlas", p, [0, 0, 0, 0]).a;
+      const skyAccess = sampleVolume(
+        U,
+        "directionAtlas",
+        p,
+        [0.5, 1, 0.5, 1],
+      ).a;
+      const density = N.smoothstep(0.1, 0.7, N.float(1).sub(skyAccess)).mul(
+        inside,
+      );
+      const extinction = density.mul(length.div(8)).mul(0.00035);
+      opticalDepth.addAssign(extinction);
       sum.addAssign(
-        N.vec3(1, 0.87, 0.65)
+        ref(U, "sunColour", "vec3")
           .mul(visibility)
-          .mul(inside)
-          .mul(length.div(8))
-          .mul(0.00065)
+          .mul(extinction)
           .mul(phase)
           .mul(cloud),
       );
     });
-    return N.vec4(sum.mul(ref(U, "bakedEnabled")).mul(ref(U, "daylight")), 1);
+    return N.vec4(
+      sum.mul(ref(U, "bakedEnabled")).mul(ref(U, "daylight")),
+      opticalDepth.mul(ref(U, "bakedEnabled")),
+    );
   })();
   const light = N.rtt(scatter, null, null, {
     resolutionScale: 0.35,
@@ -57,7 +70,7 @@ export function createAtmosphere(renderer, scene, camera, U) {
   });
   const pipeline = new T.RenderPipeline(
     renderer,
-    N.vec4(colour.rgb.add(light.rgb), colour.a),
+    N.vec4(colour.rgb.mul(N.exp(light.a.negate())).add(light.rgb), colour.a),
   );
   return {
     sceneTarget: scenePass.renderTarget,

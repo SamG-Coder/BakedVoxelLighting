@@ -7,6 +7,7 @@ export class GrassStreamQueue {
     this.jobs = [];
     this.running = 0;
     this.scheduled = false;
+    this.paused = false;
     this.waiters = [];
     this.stats = {
       queued: 0,
@@ -33,7 +34,8 @@ export class GrassStreamQueue {
   }
 
   kick() {
-    if (this.scheduled || this.running >= this.concurrency) return;
+    if (this.paused || this.scheduled || this.running >= this.concurrency)
+      return;
     this.scheduled = true;
     // Enqueue the whole spatial query before selecting its nearest requests.
     this.schedule(() => {
@@ -108,13 +110,13 @@ export function requestGrassAhead(
     if (weights[i] > 0) c.requestPriority[i] = distance;
     else if (
       Math.min(distance, predictedDistance) <
-        distances[i] + [4, 6.5, 11][i] + 24 &&
+        distances[i] + [6, 15, 32][i] + 24 &&
       (i === 0 || Math.max(distance, predictedDistance) > distances[i - 1] - 12)
     )
       c.requestPriority[i] =
         (i === 2 ? 500 : 32) + Math.min(distance, predictedDistance);
   }
-  if (distance < distances[2] + 11 && !c.levels.slice(0, 3).some(Boolean))
+  if (distance < distances[2] + 32 && !c.levels.slice(0, 3).some(Boolean))
     c.requestPriority[2] = Math.min(c.requestPriority[2], distance + 5);
   for (let i = 0; i < 3; i++)
     if (Number.isFinite(c.requestPriority[i])) c.ensure?.(i);

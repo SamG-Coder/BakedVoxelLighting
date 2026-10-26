@@ -249,6 +249,23 @@ test("grass fallback uses its resolved fade and missing patches still fade to te
   assert.deepEqual(ranges({ c: { levels: f.c.levels.filter(Boolean) } }), [
     { level: 0, low: 0, high: 1 },
   ]);
-  f.draw(200, 16);
+  f.draw(370, 16);
   assert.ok(f.c.levels.every((g) => !g || !g.visible));
+});
+
+test("newly resident grass fades from ground fallback instead of popping", () => {
+  const f = fixture([3]);
+  f.c.kind = "grass";
+  f.items.prepareGroup = null;
+  const next = f.c.levels[0];
+  f.c.levels[0] = f.c.levels[1] = f.c.levels[2] = null;
+  f.draw(10, 0);
+  f.c.levels[0] = next;
+  f.items.lodRevision = 1;
+  f.draw(10, 60000);
+  assert.equal(f.c.lodBlend.weights[0], 0);
+  f.draw(10, 60016);
+  assert.ok(f.c.lodBlend.weights[0] > 0 && f.c.lodBlend.weights[0] < 0.1);
+  for (let now = 60032; now < 61000; now += 16) f.draw(10, now);
+  assert.equal(f.c.lodBlend.weights[0], 1);
 });

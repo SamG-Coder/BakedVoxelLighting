@@ -2,7 +2,9 @@
 // to Three; this queue bounds the CPU -> GPU traffic and staging backlog.
 export const UPLOAD_LIMITS = Object.freeze({
   pageBytes: 64 * 1024,
-  frameBytes: 256 * 1024,
+  // Desktop streaming: retain a 1 ms CPU cap, but avoid throttling large
+  // tree/grass batches to 15 MB/s at 60 Hz.
+  frameBytes: 1024 * 1024,
   frameMs: 1,
   loadingBytes: 4 * 1024 * 1024,
   loadingMs: 4,

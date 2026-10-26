@@ -1,17 +1,37 @@
 import * as T from "three/webgpu";
 import { WorkerClient } from "./worker-client.js";
-const worker = new WorkerClient(
-  new Worker(new URL("./growth-worker.js", import.meta.url), {
-    type: "module",
-    name: "tree surface baker",
-  }),
-  "tree surface baker",
+// Two bounded workers overlap independent prototype bakes without a large
+// memory spike from running all twelve implicit surfaces at once.
+const workers = Array.from(
+  { length: 2 },
+  (_, i) =>
+    new WorkerClient(
+      new Worker(new URL("./growth-worker.js", import.meta.url), {
+        type: "module",
+        name: `tree surface baker ${i}`,
+      }),
+      "tree surface baker",
+    ),
 );
-export function clearTreeBakes() {
-  return worker.run("clear", {});
+let nextWorker = 0;
+const tails = workers.map(() => Promise.resolve());
+function run(type, payload) {
+  const i = nextWorker++ % workers.length;
+  const job = tails[i].then(() => workers[i].run(type, payload));
+  tails[i] = job.catch(() => {});
+  return job;
 }
-export async function growTreeAsync(seed, species, age, identity) {
-  const p = await worker.run("grow", { seed, species, age, identity });
+export function clearTreeBakes() {
+  return Promise.all(tails).then(() => workers[0].run("clear", {}));
+}
+export async function growTreeAsync(
+  seed,
+  species,
+  age,
+  identity,
+  shrub = false,
+) {
+  const p = await run("grow", { seed, species, age, identity, shrub });
   const hydrate = (r) => {
     const g = new T.BufferGeometry();
     for (const [k, v] of Object.entries(r.attributes))

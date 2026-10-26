@@ -65,14 +65,15 @@ export function fadeTSL(material) {
   // Preserve the cutoff explicitly when cloning shared material templates.
   material.alphaTest = material.userData.alphaCutoff ?? material.alphaTest;
   material.userData.fade = { value: new T.Vector2(0, 1) };
-  material.maskNode =
-    material.map && material.alphaTest > 0
-      ? fadeMask.and(
-          (material.opacityNode || N.texture(material.map).a).greaterThan(
-            N.float(material.alphaTest),
-          ),
-        )
-      : fadeMask;
+  if (!material.userData.surfaceMask)
+    material.maskNode =
+      material.map && material.alphaTest > 0
+        ? fadeMask.and(
+            (material.opacityNode || N.texture(material.map).a).greaterThan(
+              N.float(material.alphaTest),
+            ),
+          )
+        : fadeMask;
   if (material.alphaTest > 0) material.alphaToCoverage = true;
   return material;
 }
@@ -105,6 +106,7 @@ function createDecorated(original, options, U, grid) {
     transmission = 0,
     grass = false,
     grassAtlas = 0,
+    moss = false,
   } = options;
   const m = new T.MeshStandardNodeMaterial();
   // Copy standard properties without copying GLSL hooks or changing NodeMaterial's type.
@@ -154,6 +156,14 @@ function createDecorated(original, options, U, grid) {
         strength: N.float(wind),
       });
     })();
+  if (moss) {
+    m.colorNode = K.mossSurface({
+      bark: N.materialColor,
+      uv: N.uv(),
+      coverage: N.attribute("moss", "float"),
+    });
+    m.userData.moss = true;
+  }
   let groundFade = N.float(0);
   let base = N.materialColor;
   if (ground) {
@@ -221,12 +231,7 @@ function createDecorated(original, options, U, grid) {
           .mul(weight),
       );
     }
-    const block = N.floor(p.xz.add(2000).div(24)).mul(24).sub(1988);
-    groundFade = N.smoothstep(
-      55,
-      166,
-      N.distance(N.cameraPosition, N.vec3(block.x, land.r, block.y)),
-    );
+    groundFade = N.smoothstep(90, 300, N.distance(N.cameraPosition, p));
     m.colorNode = K.groundBlend({
       p,
       camera: N.cameraPosition,
@@ -298,6 +303,7 @@ function createDecorated(original, options, U, grid) {
     power: ref(U, "liveLampPower"),
     thin: ground ? groundFade.mul(0.26) : N.float(thin),
     daylight: ref(U, "daylight"),
+    sunColour: ref(U, "sunColour", "vec3"),
   });
   m.emissiveNode = N.diffuseColor.rgb.mul(extra);
   return fade ? fadeTSL(m) : m;
@@ -338,7 +344,7 @@ export function billboardTSL(m, atlas, merged = false) {
     // matching canopy surface. This avoids a ring of tall, repeated patch cards.
     const compression = atlas.grassPatch
       ? N.float(1).sub(
-          N.smoothstep(82, 166, N.distance(N.cameraPosition, data.xyz)).mul(
+          N.smoothstep(110, 300, N.distance(N.cameraPosition, data.xyz)).mul(
             0.78,
           ),
         )
@@ -355,6 +361,24 @@ export function billboardTSL(m, atlas, merged = false) {
   m.colorNode = map.rgb;
   m.opacityNode = map.a;
   m.maskNode = fadeMask.and(map.a.greaterThan(N.float(m.alphaTest)));
+  if (atlas.grassPatch) {
+    // A continuous world-space ring, independent of the tile centre. Fade the
+    // carrier's lateral edges too so an atlas cannot show a rectangular rim.
+    const distanceFade = N.float(1).sub(
+      N.smoothstep(210, 300, N.distance(N.cameraPosition, N.positionWorld)),
+    );
+    const edge = N.smoothstep(
+      0,
+      0.13,
+      N.min(N.uv().x, N.float(1).sub(N.uv().x)),
+    );
+    m.maskNode = m.maskNode.and(
+      K.fadeMask({
+        p: N.screenCoordinate.xy.add(N.vec2(37, 91)),
+        range: N.vec2(0, distanceFade.mul(edge)),
+      }),
+    );
+  }
   m.alphaToCoverage = true;
   // Atlas normals were captured in source/world space. Rotate only with the plant,
   // never with the card or current view frame.
@@ -364,6 +388,7 @@ export function billboardTSL(m, atlas, merged = false) {
   // Standard materialColor samples map at its ordinary UV. Explicitly bind both
   // albedo and emissive sampling to the selected atlas frame.
   m.emissiveNode = m.emissiveNode.context({ getUV: () => atlasUV });
+  m.userData.surfaceMask = true;
   m.userData.billboard = { views: count, rows, normalSpace: "source-world" };
   return m;
 }

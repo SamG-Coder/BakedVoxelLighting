@@ -90,6 +90,8 @@ export function volumePass(kind, u, grid) {
       mode: N.int({ occupancy: 0, transport: 1, lighting: 2 }[kind] ?? 2),
       directionMode: u.directionMode ? ref(u, "directionMode") : N.float(0),
       sun: u.sun ? ref(u, "sun", "vec3") : N.vec3(0, 1, 0),
+      // Linear RGB is supplied as Vector3 for the vec3 uniform layout.
+      sunColour: u.sunColour ? ref(u, "sunColour", "vec3") : N.vec3(1),
       lamp: u.lampPosition ? ref(u, "lampPosition", "vec3") : N.vec3(0),
       power: u.lampPower ? ref(u, "lampPower") : N.float(0),
     }),

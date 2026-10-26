@@ -10,27 +10,14 @@ export function treeTint(seed = 0) {
 
 export function barkColour(x, y, z, seed, species) {
   const rng = seededRandom(seed ^ 0x7131);
-  const tone = rng(),
-    mossAmount = 0.35 + rng() * 0.65,
-    aspect = rng() * Math.PI * 2;
-  const side = 0.5 + 0.5 * Math.cos(Math.atan2(z, x) - aspect);
-  const broad = patchNoise(x * 1.9 + seed * 0.013, z * 1.9 + y * 0.7, 609);
+  const tone = rng();
   const flecks = patchNoise(x * 7 + y * 0.9, z * 7 - y * 1.3, seed);
-  const moss =
-    (1 - smooth(0.1, 3.3, y)) *
-    smooth(0.25, 0.7, broad * 0.6 + side * 0.4) *
-    mossAmount;
   const lichen = smooth(0.63, 0.85, flecks) * 0.22;
   const base =
     species === 1
       ? [0.94, 0.96, 0.91]
       : [0.84 + tone * 0.25, 0.82 + tone * 0.13, 0.76 + tone * 0.11];
-  const green = [0.28, 0.54, 0.17];
-  return base.map(
-    (v, i) =>
-      (v * (1 - moss) + green[i] * moss) * (1 - lichen) +
-      [0.78, 0.82, 0.69][i] * lichen,
-  );
+  return base.map((v, i) => v * (1 - lichen) + [0.78, 0.82, 0.69][i] * lichen);
 }
 
 export function leafColour(x, y, z, seed) {
@@ -42,4 +29,31 @@ export function leafColour(x, y, z, seed) {
     value,
     value * (0.57 + (1 - tone) * 0.24),
   ];
+}
+
+// Age classes: sapling 0, mature 1, old 2. Older rough bark supports broader
+// colonies. Aspect and patch noise break the mask up; age alone is not ecology.
+export function mossCoverage(x, y, z, seed, age = 1) {
+  const rng = seededRandom(seed ^ 0x7131);
+  rng();
+  const variation = 0.7 + rng() * 0.3,
+    aspect = rng() * Math.PI * 2;
+  const side = 0.5 + 0.5 * Math.cos(Math.atan2(z, x) - aspect);
+  const patch = patchNoise(x * 2.2 + seed * 0.013, z * 2.2 + y * 0.55, 609);
+  return (
+    [0.07, 0.62, 0.95][Math.max(0, Math.min(2, age))] *
+    variation *
+    (1 - smooth(0.3, 1.2 + age * 1.15, y)) *
+    smooth(0.23, 0.67, patch * 0.6 + side * 0.4)
+  );
+}
+
+export function barkReflectance(x, y, z, seed, species, age) {
+  const base = barkColour(x, y, z, seed, species);
+  const coverage = mossCoverage(x, y, z, seed, age);
+  return base.map(
+    (v, i) =>
+      [0.24, 0.17, 0.09][i] * v * (1 - coverage) +
+      [0.065, 0.125, 0.017][i] * coverage,
+  );
 }

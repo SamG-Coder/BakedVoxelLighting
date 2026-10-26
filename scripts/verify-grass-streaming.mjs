@@ -148,7 +148,7 @@ test("grass requested while still in ground-only LOD is released beyond retentio
   let releases = 0;
   const c = {
     kind: "grass",
-    center: new Vector3(250, 0, 0),
+    center: new Vector3(370, 0, 0),
     current: 3,
     levels: [null, null, new Group(), new Group()],
     pending: new Map(),

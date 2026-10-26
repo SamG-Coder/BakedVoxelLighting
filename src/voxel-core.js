@@ -191,9 +191,10 @@ function* voxelDetailChunks(world, n, min, size, grassRecords) {
               .lerp(b, k / steps)
               .toArray(),
             [r, r, r],
-            [0.24, 0.17, 0.09].map(
-              (v, i) => v * tint[i] * (path.colour?.[i] ?? 1),
-            ),
+            (
+              path.reflectance ||
+              [0.24, 0.17, 0.09].map((v, i) => v * (path.colour?.[i] ?? 1))
+            ).map((v, i) => v * tint[i]),
             1,
             8,
           );

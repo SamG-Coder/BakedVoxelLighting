@@ -1,22 +1,45 @@
 import assert from "node:assert/strict";
 import { growPlant, skinPath } from "../src/growth.js";
 import { growStructure } from "../src/plant-growth.js";
-import { treeTint, barkColour, leafColour } from "../src/plant-appearance.js";
+import {
+  treeTint,
+  barkColour,
+  leafColour,
+  mossCoverage,
+} from "../src/plant-appearance.js";
 import { bakeMergedCluster } from "../src/merged-data.js";
 import { grassHabitat } from "../src/habitat.js";
-import { unionWood } from '../src/wood-union.js';
-import { Vector3 } from 'three/webgpu';
+import { unionWood } from "../src/wood-union.js";
+import { Vector3 } from "three/webgpu";
 
-const graft=unionWood([
- {points:[new Vector3(0,-.5,0),new Vector3(0,2,0)],radii:[.35,.25]},
- {points:[new Vector3(0,.7,0),new Vector3(1.4,1.4,0)],radii:[.20,.08]},
-],{seed:19,species:0});
-const edgeUse=new Map();
-const ix=graft.index.array;
-for(let i=0;i<ix.length;i+=3)for(const [a,b]of [[ix[i],ix[i+1]],[ix[i+1],ix[i+2]],[ix[i+2],ix[i]]]) {
- const key=a<b?`${a}:${b}`:`${b}:${a}`;edgeUse.set(key,(edgeUse.get(key)||0)+1);
-}
-assert.ok([...edgeUse.values()].every(n=>n===2),'trunk/branch union is closed with shared edges, not overlapping collars');
+const graft = unionWood(
+  [
+    {
+      points: [new Vector3(0, -0.5, 0), new Vector3(0, 2, 0)],
+      radii: [0.35, 0.25],
+    },
+    {
+      points: [new Vector3(0, 0.7, 0), new Vector3(1.4, 1.4, 0)],
+      radii: [0.2, 0.08],
+    },
+  ],
+  { seed: 19, species: 0 },
+);
+const edgeUse = new Map();
+const ix = graft.index.array;
+for (let i = 0; i < ix.length; i += 3)
+  for (const [a, b] of [
+    [ix[i], ix[i + 1]],
+    [ix[i + 1], ix[i + 2]],
+    [ix[i + 2], ix[i]],
+  ]) {
+    const key = a < b ? `${a}:${b}` : `${b}:${a}`;
+    edgeUse.set(key, (edgeUse.get(key) || 0) + 1);
+  }
+assert.ok(
+  [...edgeUse.values()].every((n) => n === 2),
+  "trunk/branch union is closed with shared edges, not overlapping collars",
+);
 graft.dispose();
 
 let vertices = 0;
@@ -83,3 +106,13 @@ console.log({
     "junction normals, root footprint, reduced LOD geometry, seed colours and merged colour parity passed",
   highVerticesAcrossFourSpecies: vertices,
 });
+
+const moss = [0, 1, 2].map((age) =>
+  Array.from({ length: 100 }, (_, i) =>
+    mossCoverage(Math.cos(i) * 0.4, 0.3, Math.sin(i) * 0.4, 9801, age),
+  ).reduce((a, b) => a + b, 0),
+);
+assert.ok(
+  moss[1] > moss[0] * 4 && moss[2] > moss[1],
+  "older bark must carry visibly more moss",
+);

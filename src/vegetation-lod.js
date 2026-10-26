@@ -50,7 +50,9 @@ function advance(c, now, scene, transitions) {
   }
   // Bound the first visible step after a paused tab or a long upload. A completed
   // upload starts a handoff; it doesn't inherit the time spent waiting for it.
-  const step = Math.min(50, Math.max(0, now - state.time)) / handoffMs;
+  const step =
+    Math.min(50, Math.max(0, now - state.time)) /
+    (c.kind === "grass" ? 650 : handoffMs);
   const alpha = difference <= step + 1e-8 ? 1 : step / difference;
   state.time = now;
   for (let i = 0; i < 4; i++)
@@ -126,8 +128,8 @@ export function updateLOD(
     items.active = new Set();
     const gx = Math.floor((camera.position.x + 2000) / 24),
       gz = Math.floor((camera.position.z + 2000) / 24);
-    for (let z = gz - 11; z <= gz + 11; z++)
-      for (let x = gx - 11; x <= gx + 11; x++) {
+    for (let z = gz - 16; z <= gz + 16; z++)
+      for (let x = gx - 16; x <= gx + 16; x++) {
         const p = items.grid.get(`${x}:${z}`);
         if (p) candidates.add(p);
       }
@@ -136,7 +138,7 @@ export function updateLOD(
   for (const c of candidates) {
     const d = c.center.distanceTo(camera.position);
     c.priority = d;
-    if (c.kind === "grass" && d > 240) {
+    if (c.kind === "grass" && d > 360) {
       counts[3]++;
       if (
         c.current !== 3 ||
@@ -161,7 +163,7 @@ export function updateLOD(
               ? 2
               : 3
         : force;
-    if (c.kind === "grass" && d > 175) level = 3;
+    if (c.kind === "grass" && d > 320) level = 3;
     if (c.kind === "tree" && d > 650 && force >= 0) level = 3;
     counts[level]++;
     c.current = level;
@@ -169,7 +171,7 @@ export function updateLOD(
     weights[level] = 1;
     if (force < 0) {
       for (let i = 0; i < 3; i++) {
-        const width = c.kind === "tree" ? [14, 26, 45][i] : [8, 13, 22][i];
+        const width = c.kind === "tree" ? [14, 26, 45][i] : [12, 30, 64][i];
         if (Math.abs(d - distances[i]) < width / 2) {
           const blend = MathUtils.smoothstep(
             d,
@@ -196,7 +198,7 @@ export function updateLOD(
           .map((w) => (w > 0 ? d : Infinity));
         for (let i = 0; i < 3; i++) if (weights[i] > 0) c.ensure?.(i);
       }
-      if (d > 190) {
+      if (d > 336) {
         for (const object of c.levels)
           if (object) {
             object.visible = false;
@@ -206,6 +208,8 @@ export function updateLOD(
         continue;
       }
     }
+    if (c.kind === "tree")
+      for (let i = 0; i < 2; i++) if (weights[i] > 0) c.ensure?.(i);
     const resident = c.levels.map(
       (object) =>
         !!object && (!items.prepareGroup || object.userData.pipelineReady),
@@ -239,8 +243,8 @@ export function updateLOD(
     }
     const state = c.lodBlend;
     if (
-      c.kind !== "tree" ||
-      !items.prepareGroup ||
+      (c.kind !== "tree" && c.kind !== "grass") ||
+      (c.kind === "tree" && !items.prepareGroup) ||
       !state ||
       state.weights.some((w, i) => w > 0 && !resident[i]) ||
       !state.weights.some((w) => w > 0)

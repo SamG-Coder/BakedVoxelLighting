@@ -1,7 +1,11 @@
 import * as T from "three/webgpu";
 import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
 import { growStructure } from "./plant-growth.js";
-import { barkColour } from "./plant-appearance.js";
+import {
+  barkColour,
+  mossCoverage,
+  barkReflectance,
+} from "./plant-appearance.js";
 import { smooth } from "./habitat.js";
 import { unionWood } from "./wood-union.js";
 
@@ -197,6 +201,18 @@ function tube(path, sides, plant, level) {
       ),
     );
   g.setAttribute("color", new T.Float32BufferAttribute(colours, 3));
+  const moss = [];
+  for (let i = 0; i < positions.length; i += 3)
+    moss.push(
+      mossCoverage(
+        positions[i],
+        positions[i + 1],
+        positions[i + 2],
+        plant.seed,
+        plant.age,
+      ),
+    );
+  g.setAttribute("moss", new T.Float32BufferAttribute(moss, 1));
   return g;
 }
 export function growPlant(seed, species = 0, shrub = false, age = 1) {
@@ -273,6 +289,14 @@ export function growPlant(seed, species = 0, shrub = false, age = 1) {
           : skinPath(path);
       return {
         ...skin,
+        reflectance: barkReflectance(
+          skin.points[0].x,
+          skin.points[0].y,
+          skin.points[0].z,
+          seed,
+          species,
+          age,
+        ),
         colour: barkColour(
           skin.points[0].x,
           skin.points[0].y,

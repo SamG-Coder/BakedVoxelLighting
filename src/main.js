@@ -41,7 +41,11 @@ import { skyColour } from "./native-kernels.js";
 import { ref } from "./tsl-baking.js";
 import grassWorkerSource from "./grass-worker.js?raw";
 import { buildVoxelDetailsAsync, voxelWorkerStats } from "./voxel-details.js";
-import { finishGrassJobs, grassStreamingStats } from "./vegetation.js";
+import {
+  finishGrassJobs,
+  startGrassJobs,
+  grassStreamingStats,
+} from "./vegetation.js";
 import atlasWorkerSource from "./atlas-worker.js?raw";
 import { setShaderBackend, nativeVolumeSource } from "./native-kernels.js";
 import nativeSource from "./native-kernels.js?raw";
@@ -307,6 +311,7 @@ function applySolar() {
     0.73 + 0.23 * Math.max(0, sunDirection.y),
     0.46 + 0.43 * Math.max(0, sunDirection.y),
   );
+  lightUniforms.sunColour.value.set(sun.color.r, sun.color.g, sun.color.b);
   sky.sunPosition.value.copy(sunDirection);
   lightUniforms.liveSunDirection.value.copy(sunDirection);
   sunDisc.visible = sunDirection.y > -0.015;
@@ -347,6 +352,12 @@ function setSun(degrees) {
   sunDirection
     .set(Math.cos(a) * -0.78, Math.sin(a), Math.cos(a) * -0.625)
     .normalize();
+  sun.color.setRGB(
+    1,
+    0.73 + 0.23 * Math.max(0, sunDirection.y),
+    0.46 + 0.43 * Math.max(0, sunDirection.y),
+  );
+  lightUniforms.sunColour.value.set(sun.color.r, sun.color.g, sun.color.b);
   sky.sunPosition.value.copy(sunDirection);
   lightUniforms.liveSunDirection.value.copy(sunDirection);
   diagnostics.sun = {
@@ -390,6 +401,13 @@ let clusters = [],
   lastLighting = 0,
   lightDirty = false;
 function progress(message, p) {
+  if (!loopStarted) {
+    diagnostics.startup ||= [];
+    diagnostics.startup.push({
+      stage: message,
+      ms: Math.round(performance.now()),
+    });
+  }
   $("status").textContent = message;
   $("progress").style.width = Math.round(p * 100) + "%";
 }
@@ -628,14 +646,35 @@ async function loadAssets() {
   const assets = {},
     hashes = [],
     loader = new T.TextureLoader();
+  // Fetch/decode concurrently; GPU normal and atlas passes remain serialized.
+  const downloads = new Map(
+    assetNames.map((name) => {
+      const url = `${import.meta.env.BASE_URL}textures/${name}.png`;
+      return [
+        name,
+        (async () => {
+          const response = await fetch(url);
+          if (!response.ok) throw Error(`Missing ${name}`);
+          const blob = await response.blob();
+          const hash = await digest(await blob.arrayBuffer());
+          const objectURL = URL.createObjectURL(blob);
+          try {
+            return { hash, map: await loader.loadAsync(objectURL) };
+          } finally {
+            URL.revokeObjectURL(objectURL);
+          }
+        })(),
+      ];
+    }),
+  );
+  // Attach rejection handlers immediately while consuming in stable asset order.
+  for (const job of downloads.values()) job.catch(() => {});
   for (const name of assetNames) {
     progress(`Loading ${name} surface`, 0.01);
-    const textureUrl = `${import.meta.env.BASE_URL}textures/${name}.png`;
-    const response = await fetch(textureUrl);
-    if (!response.ok) throw Error(`Missing ${name}`);
-    const hash = await digest(await response.arrayBuffer());
+    const downloaded = await downloads.get(name);
+    const hash = downloaded.hash;
     hashes.push(hash);
-    let map = await loader.loadAsync(textureUrl);
+    let map = downloaded.map;
     map.colorSpace = T.SRGBColorSpace;
     map.anisotropy = Math.min(16, renderer.getMaxAnisotropy());
     if (
@@ -1098,7 +1137,14 @@ async function start() {
   deadwood = buildDeadwood(world, assets);
   diagnostics.deadwood = deadwood.stats;
   window.worldTest.deadwood = deadwood;
-  clusters = await buildTrees(world, assets, surfaceIdentity, progress);
+  const geometryIdentity = await digest(
+    growthSource +
+      plantGrowthSource +
+      woodUnionSource +
+      appearanceSource +
+      catalogSource,
+  );
+  clusters = await buildTrees(world, assets, geometryIdentity, progress);
   grass = buildGrass(assets);
   clusters.prepareGroup = (group) => {
     if (group.userData.pipelineReady) return Promise.resolve();
@@ -1123,20 +1169,43 @@ async function start() {
     });
     return group.userData.preparation;
   };
-  grass.prepare = async (group, priority) => {
-    group.updateMatrixWorld(true);
-    if (group.children.length) {
-      await prepareForRender(
-        renderer,
-        group,
-        camera,
-        scene,
-        composer.sceneTarget,
-        null,
-        1,
-        priority,
-      );
-    }
+  // Worker completions arrive in a small burst. Compile/upload that page together
+  // rather than paying compileAsync's scheduling overhead once per grass tile.
+  let grassPreparation = [],
+    grassPreparationTimer = null;
+  grass.prepare = (group, priority) => {
+    if (!group.children.length) return Promise.resolve();
+    const result = new Promise((resolve, reject) => {
+      grassPreparation.push({ group, priority, resolve, reject });
+    });
+    if (grassPreparationTimer === null)
+      grassPreparationTimer = setTimeout(async () => {
+        grassPreparationTimer = null;
+        const requests = grassPreparation;
+        grassPreparation = [];
+        const page = new T.Group();
+        for (const request of requests) page.add(request.group);
+        try {
+          await prepareForRender(
+            renderer,
+            page,
+            camera,
+            scene,
+            composer.sceneTarget,
+            null,
+            1,
+            () => Math.min(...requests.map((request) => request.priority())),
+          );
+          for (const request of requests) request.resolve();
+        } catch (error) {
+          for (const request of requests) request.reject(error);
+        } finally {
+          // Publication remains the owner's responsibility, after the whole page
+          // is resident. No visible representation is removed during preparation.
+          page.clear();
+        }
+      }, 8);
+    return result;
   };
   diagnostics.grassGround = await bakeGrassGround(
     renderer,
@@ -1144,7 +1213,7 @@ async function start() {
     surfaceIdentity,
     assets,
   );
-  shrubs = buildShrubs(world, assets);
+  shrubs = await buildShrubs(world, assets, geometryIdentity);
   world.materialProfiles = Object.fromEntries(
     Object.entries(assets)
       .filter(([, v]) => v.profile)
@@ -1171,7 +1240,8 @@ async function start() {
   window.worldTest.grass = grass;
   window.worldTest.shrubs = shrubs;
   clusters.forEach((c) => {
-    if (c.center.distanceTo(camera.position) < 180) scene.add(c.levels[0]);
+    if (c.levels[0] && c.center.distanceTo(camera.position) < 180)
+      scene.add(c.levels[0]);
   });
   diagnostics.areaIndexes = indexVoxelWorld(world);
   world.bakeIdentity = await digest(
@@ -1191,21 +1261,25 @@ async function start() {
   updateShrubs(shrubs, camera, scene);
   updateShrubs(deadwood, camera, scene);
   updateTerrain(camera);
-  await finishGrassJobs();
-  updateLOD(grass.patches, camera, forcedGrass, GRASS_LOD_DISTANCES, scene);
-  // Merge the starting distance ring in every direction before presentation.
-  // Translation into another ring can still request additional merges.
-  for (let i = 0; i < clusters.length; i += 8) {
-    const jobs = [];
-    for (let j = 0; j < 8; j++) {
-      const job = updateMergedVisibility(clusters, camera, scene, true);
-      if (!job) break;
-      jobs.push(job);
+  // Ground cover is already resident. Stream geometry after the first frame
+  // instead of holding presentation until hundreds of grass tiles finish.
+  // Initial merged geometry is prepared in the single scene warmup below.
+  // Avoid a separate compile/upload round-trip for each of the 1024 clusters.
+  clusters.startupMerge = true;
+  try {
+    for (let i = 0; i < clusters.length; i += 8) {
+      const jobs = [];
+      for (let j = 0; j < 8; j++) {
+        const job = updateMergedVisibility(clusters, camera, scene, true);
+        if (!job) break;
+        jobs.push(job);
+      }
+      if (!jobs.length) break;
+      await Promise.all(jobs);
+      progress(`Preparing forest pages ${mergedStats.baked}`, 0.97);
     }
-    if (!jobs.length) break;
-    await Promise.all(jobs);
-    progress(`Merging visible forest clusters ${mergedStats.baked}`, 0.97);
-    await new Promise(requestAnimationFrame);
+  } finally {
+    clusters.startupMerge = false;
   }
   updateMergedVisibility(clusters, camera, scene);
   // Warm the active distance rings in every direction. Frustum-limited compilation
@@ -1249,6 +1323,7 @@ async function start() {
   progress(`16 km² · ${world.trees.length} trees · ready`, 1);
   setPreparationPresenting(true);
   loopStarted = true;
+  startGrassJobs();
   scheduleFrame();
 }
 start().catch(fail);

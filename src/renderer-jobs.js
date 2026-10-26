@@ -10,14 +10,26 @@ export const rendererJobStats = {
   errors: [],
 };
 let presenting = false;
+let preparationMs = 0;
+let creditAt = 0;
 export function setPreparationPresenting(value) {
   presenting = value;
   setUploadsInteractive(value);
 }
 const afterFrame = () =>
   new Promise((resolve) => {
-    if (presenting && !document.hidden)
-      requestAnimationFrame(() => setTimeout(resolve, 0));
+    // Several cached tiles can share a frame's CPU preparation budget. Uploads
+    // retain their independent page/byte limits. Never force one frame per tile.
+    if (performance.now() - creditAt > 16) {
+      creditAt = performance.now();
+      preparationMs = 0;
+    }
+    if (presenting && !document.hidden && preparationMs >= 2)
+      requestAnimationFrame(() => {
+        creditAt = performance.now();
+        preparationMs = 0;
+        setTimeout(resolve, 0);
+      });
     else setTimeout(resolve, 0);
   });
 export function prepareForRender(
@@ -72,6 +84,7 @@ export function prepareForRender(
           o.visible = visible;
           o.frustumCulled = culled;
         }
+        preparationMs += performance.now() - started;
         rendererJobStats.maxStartMs = Math.max(
           rendererJobStats.maxStartMs,
           performance.now() - started,

@@ -2,7 +2,9 @@ import { growPlant } from "./growth.js";
 import { BakeCache } from "./cache.js";
 const cache = new BakeCache("BakedTreeSurfaces-v1"),
   ready = cache.open();
-self.onmessage = async ({ data: { id, type, seed, species, age, identity } }) => {
+self.onmessage = async ({
+  data: { id, type, seed, species, age, identity, shrub = false },
+}) => {
   try {
     await ready;
     if (type === "clear") {
@@ -10,10 +12,10 @@ self.onmessage = async ({ data: { id, type, seed, species, age, identity } }) =>
       self.postMessage({ id, result: true });
       return;
     }
-    const key = `wood-union-v1:${identity}:${seed}:${species}:${age}`;
+    const key = `wood-union-v1:${identity}:${seed}:${species}:${age}:${shrub}`;
     let record = await cache.get(key);
     if (!record) {
-      const plant = growPlant(seed, species, false, age);
+      const plant = growPlant(seed, species, shrub, age);
       const pack = (g) => ({
         attributes: Object.fromEntries(
           Object.entries(g.attributes).map(([k, v]) => [

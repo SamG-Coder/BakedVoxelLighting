@@ -113,7 +113,7 @@ async function install(c, record, clusters, version) {
   group.add(mesh);
   group.visible = false;
   // Do not publish an uncompiled replacement into the next frame.
-  await clusters.prepareGroup?.(group);
+  if (!clusters.startupMerge) await clusters.prepareGroup?.(group);
   if (version !== generation) {
     g.dispose();
     mesh.material.dispose();

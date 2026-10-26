@@ -22,6 +22,7 @@ function prepare(world) {
           paths: p.paths.map((path) => ({
             radii: path.radii,
             colour: path.colour,
+            reflectance: path.reflectance,
             points: path.points.map((v) => v.toArray()),
           })),
         })),

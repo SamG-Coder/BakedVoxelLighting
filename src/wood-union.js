@@ -1,6 +1,6 @@
 import * as T from "three/webgpu";
 import { triTable } from "three/addons/objects/MarchingCubes.js";
-import { barkColour } from "./plant-appearance.js";
+import { barkColour, mossCoverage } from "./plant-appearance.js";
 
 // Sparse narrow-band implicit union, baked once per prototype. The marching
 // cubes share their interpolated edge vertices: a fork is one surface.
@@ -275,6 +275,18 @@ export function unionWood(paths, plant, coarse = false) {
   geometry.setAttribute("normal", new T.Float32BufferAttribute(normal, 3));
   geometry.setAttribute("uv", new T.Float32BufferAttribute(uv, 2));
   geometry.setAttribute("color", new T.Float32BufferAttribute(colour, 3));
+  const moss = [];
+  for (let i = 0; i < positions.length; i += 3)
+    moss.push(
+      mossCoverage(
+        positions[i],
+        positions[i + 1],
+        positions[i + 2],
+        plant.seed,
+        plant.age,
+      ),
+    );
+  geometry.setAttribute("moss", new T.Float32BufferAttribute(moss, 1));
   geometry.setIndex(indices);
   return geometry;
 }

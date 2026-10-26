@@ -54,6 +54,7 @@ export async function captureSurface(
           if (!m) {
             m = new T.MeshBasicNodeMaterial();
             m.map = original.map;
+            m.color.copy(original.color);
             m.alphaTest = original.alphaTest;
             m.side = original.side;
             m.toneMapped = false;
@@ -85,7 +86,7 @@ export async function captureSurface(
                 N.If(alpha.lessThanEqual(original.alphaTest || 0), () =>
                   N.Discard(),
                 );
-                let rgb = colour;
+                let rgb = original.userData.moss ? original.colorNode : colour;
                 if (
                   original.vertexColors &&
                   mesh.geometry.hasAttribute("color")

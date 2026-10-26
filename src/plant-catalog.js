@@ -18,8 +18,8 @@ export const GRASS_PATCH = {
   centerY: 1.15,
   count: 190,
 };
-export const GRASS_LOD_DISTANCES = [38, 82, 155];
-export const PLANT_REVISION = "woodland-junctions-colour-v4";
+export const GRASS_LOD_DISTANCES = [45, 110, 280];
+export const PLANT_REVISION = "woodland-streaming-moss-v5";
 export const GRASS_MIXES = [
   [0.25, 0.43, 0.04, 0.025, 0.21, 0.03, 0.015],
   [0.15, 0.2, 0.38, 0.22, 0.03, 0.015, 0.005],

@@ -21,7 +21,7 @@ import * as T from "three/webgpu";
 import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
 import { random, height } from "./world-data.js";
 import { TERRAIN_SIZE, terrainSample } from "./terrain-field.js";
-import { decorate, lightUniforms } from "./lighting.js";
+import { decorate, fadeMaterial, lightUniforms } from "./lighting.js";
 import { growPlant } from "./growth.js";
 import { growTreeAsync } from "./growth-jobs.js";
 import { treeTint } from "./plant-appearance.js";
@@ -75,7 +75,12 @@ function mergedLeaves(items) {
   parts.forEach((g) => g.dispose());
   return result;
 }
+const plantMaterialCache = new WeakMap();
 function plantMaterials(assets, species, shrub = false) {
+  let cache = plantMaterialCache.get(assets);
+  if (!cache) plantMaterialCache.set(assets, (cache = new Map()));
+  const key = `${species}:${shrub}`;
+  if (cache.has(key)) return cache.get(key).map((m) => fadeMaterial(m.clone()));
   const name = shrub
     ? ["hazel", "bramble", "ash"][species]
     : TREE_TYPES[species];
@@ -98,6 +103,7 @@ function plantMaterials(assets, species, shrub = false) {
             ? 0xc6b09b
             : 0xe2d8c6,
     }),
+    { moss: true },
   );
   const leaf = decorate(
     new T.MeshStandardMaterial({
@@ -113,7 +119,8 @@ function plantMaterials(assets, species, shrub = false) {
     }),
     { wind: shrub ? 0.018 : 0.028 },
   );
-  return [wood, leaf];
+  cache.set(key, [wood, leaf]);
+  return [wood, leaf].map((m) => fadeMaterial(m.clone()));
 }
 function makeModel(plant, assets, low = false) {
   const group = new T.Group(),
@@ -126,18 +133,21 @@ function makeModel(plant, assets, low = false) {
   return group;
 }
 export async function buildTrees(world, assets, identity, progress = () => {}) {
+  const jobs = Array.from({ length: TREE_VARIANTS }, (_, i) =>
+    growTreeAsync(
+      9801 + i * 137,
+      i % TREE_TYPES.length,
+      Math.floor(i / TREE_TYPES.length),
+      identity,
+    ),
+  );
   const prototypes = [];
   for (let i = 0; i < TREE_VARIANTS; i++) {
     progress(
       `Baking connected tree surfaces ${i + 1}/${TREE_VARIANTS}`,
       0.06 + (0.1 * i) / TREE_VARIANTS,
     );
-    const p = await growTreeAsync(
-      9801 + i * 137,
-      i % TREE_TYPES.length,
-      Math.floor(i / TREE_TYPES.length),
-      identity,
-    );
+    const p = await jobs[i];
     p.foliage = mergedLeaves(p.leaves);
     p.model = makeModel(p, assets);
     const box = new T.Box3().setFromObject(p.model),
@@ -148,7 +158,8 @@ export async function buildTrees(world, assets, identity, progress = () => {}) {
     prototypes.push(p);
   }
   const clusters = world.clusters.map((c) => {
-    const levels = [0, 1].map((level) => {
+    const levels = [null, null];
+    const makeLevel = (level) => {
       const group = new T.Group();
       for (let i = 0; i < TREE_VARIANTS; i++) {
         const transforms = c.trees
@@ -169,14 +180,34 @@ export async function buildTrees(world, assets, identity, progress = () => {}) {
         group.add(trunk, leaves);
       }
       return group;
-    });
-    return {
+    };
+    const entry = {
       ...c,
       levels,
       current: -1,
       center: new T.Vector3(c.x, height(c.x, c.z) + 8, c.z),
       kind: "tree",
     };
+    const pending = new Set();
+    entry.ensure = (level) => {
+      if (level > 1 || levels[level] || pending.has(level)) return;
+      pending.add(level);
+      // Instantiate only nearby high-detail batches, between frames. Keep the
+      // prepared far representation until both pipeline and pages are resident.
+      setTimeout(async () => {
+        try {
+          const group = makeLevel(level);
+          await clusters.prepareGroup?.(group);
+          levels[level] = group;
+          clusters.lodRevision = (clusters.lodRevision || 0) + 1;
+        } catch (error) {
+          console.error(error);
+        } finally {
+          pending.delete(level);
+        }
+      }, 0);
+    };
+    return entry;
   });
   clusters.prototypes = prototypes;
   return clusters;
@@ -271,7 +302,7 @@ export async function bakeTreeHLOD(
         p.model.children[0].material.clone(),
         transforms,
       );
-      wood.material = decorate(wood.material);
+      wood.material = fadeMaterial(wood.material);
       wood.castShadow = wood.receiveShadow = true;
       middle.add(wood);
       for (const [group, atlas] of [
@@ -364,6 +395,11 @@ export function grassPoints(
 }
 const yieldWork = () => new Promise((resolve) => setTimeout(resolve, 0));
 const grassQueue = new GrassStreamQueue();
+grassQueue.paused = true;
+export function startGrassJobs() {
+  grassQueue.paused = false;
+  grassQueue.kick();
+}
 export const grassStreamingStats = grassQueue.stats;
 export const finishGrassJobs = () => grassQueue.finish();
 export function buildGrass(assets) {
@@ -566,10 +602,10 @@ export async function bakeGrassLOD(
 }
 export { updateLOD } from "./vegetation-lod.js";
 
-export function buildShrubs(world, assets) {
+export async function buildShrubs(world, assets, identity) {
   const prototypes = [];
   for (let k = 0; k < 3; k++) {
-    const p = growPlant(552 + k * 83, k, true);
+    const p = await growTreeAsync(552 + k * 83, k, 1, identity, true);
     p.foliage = mergedLeaves(p.leaves);
     p.model = makeModel(p, assets);
     const box = new T.Box3().setFromObject(p.model),
