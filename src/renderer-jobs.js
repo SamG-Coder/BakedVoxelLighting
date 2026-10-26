@@ -48,6 +48,7 @@ export function prepareForRender(
   const job = queue
     .run(async () => {
       await afterFrame();
+      if (priority && !Number.isFinite(priority())) return;
       object.updateMatrixWorld(true);
       const saved = [];
       object.traverse((o) => {

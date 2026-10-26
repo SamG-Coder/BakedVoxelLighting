@@ -1,4 +1,5 @@
 import { reorderVoxels } from "./voxel-details.js";
+import { renderBakeSlices } from "./bake-slices.js";
 import { prepareForRender } from "./renderer-jobs.js";
 import { uploadTextures } from "./gpu-uploads.js";
 import {
@@ -128,311 +129,367 @@ export async function bakeVolume(
   sun,
   assetHash,
   onProgress,
+  interactive = false,
+  signal,
 ) {
-  const start = performance.now();
-  const stages = {},
-    operations = {};
-  const timed = async (name, work) => {
-    const t = performance.now();
-    try {
-      return await work();
-    } finally {
-      operations[name] = performance.now() - t;
-    }
+  const owned = new Set();
+  const own = (value) => {
+    owned.add(value);
+    return value;
   };
-  let stageStart = start;
-  const mark = (name) => {
-    stages[name] = performance.now() - stageStart;
-    stageStart = performance.now();
-  };
-  const origin = volumeMin.clone();
-  const geometryKey =
-    "occupancy:" +
-    (await digest(
-      JSON.stringify({
-        world: world.bakeIdentity,
-        n,
-        origin: origin.toArray(),
-        assetHash,
-        shader: nativeVolumeSource + tslBakeSource,
+  let publishedResult = false;
+  const priority = () => (signal?.aborted ? Infinity : 180);
+  try {
+    const start = performance.now();
+    const stages = {},
+      operations = {};
+    const timed = async (name, work) => {
+      const t = performance.now();
+      try {
+        return await work();
+      } finally {
+        operations[name] = performance.now() - t;
+      }
+    };
+    let stageStart = start;
+    const mark = (name) => {
+      stages[name] = performance.now() - stageStart;
+      stageStart = performance.now();
+    };
+    const origin = volumeMin.clone();
+    const geometryKey =
+      "occupancy:" +
+      (await digest(
+        JSON.stringify({
+          world: world.bakeIdentity,
+          n,
+          origin: origin.toArray(),
+          assetHash,
+          shader: nativeVolumeSource + tslBakeSource,
+        }),
+      ));
+    let geometry = await cache.get(geometryKey);
+    signal?.throwIfAborted();
+    const target = own(
+      new T.RenderTarget(n, (n * n) / 2, {
+        depthBuffer: false,
+        minFilter: T.LinearFilter,
+        magFilter: T.LinearFilter,
       }),
-    ));
-  let geometry = await cache.get(geometryKey);
-  const target = new T.RenderTarget(n, (n * n) / 2, {
-    depthBuffer: false,
-    minFilter: T.LinearFilter,
-    magFilter: T.LinearFilter,
-  });
-  const dims = new T.Vector3(n, n / 2, n),
-    uniforms = {
-      dims: { value: dims },
-      vmin: { value: origin },
-      extent: { value: volumeSize },
-      terrainField: { value: terrainTexture },
-      rootField: { value: rootTexture },
-      liveMoonDirection: { value: new T.Vector3(0, -1, 0) },
-      liveSunDirection: { value: new T.Vector3(-0.6, 0.6, -0.5) },
-      liveLampPosition: { value: new T.Vector3() },
-      liveLampPower: { value: 0 },
-    };
-  const scene = new T.Scene(),
-    camera = new T.OrthographicCamera(-1, 1, 1, -1, 0, 1),
-    quad = new T.Mesh(new T.PlaneGeometry(2, 2));
-  scene.add(quad);
-  const old = renderer.getRenderTarget();
-  if (!geometry) {
-    onProgress("Voxelizing eroded terrain & woodland", 0.08);
-    const detailRecord = await world.buildVoxelDetails(
-      world,
-      n,
-      origin,
-      volumeSize,
     );
-    mark("voxelDetailsMs");
-    onProgress("Baking indexed terrain & woodland occupancy", 0.12);
-    const detailTexture = data3D(detailRecord.data, n);
-    const grid = detailRecord.treeGrid;
-    const trees = new T.DataTexture(
-      grid.data,
-      grid.width,
-      grid.height,
-      T.RGBAFormat,
-      T.FloatType,
-    );
-    lightingState.treeLookup = {
-      trees: grid.trees,
-      records: grid.records,
-      meanCandidates: grid.meanCandidates,
-    };
-    trees.needsUpdate = true;
-    quad.material = volumePass(
-      "occupancy",
-      {
-        ...uniforms,
-        trees: { value: trees },
-        details: { value: detailTexture },
-      },
-      TERRAIN_GRID,
-    );
-    await timed("occupancyPrepareMs", () =>
-      prepareForRender(
-        renderer,
-        scene,
-        camera,
-        scene,
-        target,
-        null,
-        0,
-        () => 180,
-      ),
-    );
-    try {
-      renderer.setRenderTarget(target);
-      renderer.render(scene, camera);
-      renderer.setRenderTarget(old);
-      const packed = new Uint8Array(((n * n * n) / 2) * 4);
-      await timed("occupancyReadbackMs", () =>
-        readPixels(renderer, target, 0, 0, n, (n * n) / 2, packed),
-      );
-      geometry = {
-        data: await reorderVoxels(packed, n),
-        n,
-        kinds: detailRecord.kinds,
-        contributors: detailRecord.counts,
-        treeLookup: lightingState.treeLookup,
+    const dims = new T.Vector3(n, n / 2, n),
+      uniforms = {
+        dims: { value: dims },
+        vmin: { value: origin },
+        extent: { value: volumeSize },
+        terrainField: { value: terrainTexture },
+        rootField: { value: rootTexture },
+        liveMoonDirection: { value: new T.Vector3(0, -1, 0) },
+        liveSunDirection: { value: new T.Vector3(-0.6, 0.6, -0.5) },
+        liveLampPosition: { value: new T.Vector3() },
+        liveLampPower: { value: 0 },
       };
-      await timed("occupancyCacheMs", () => cache.put(geometryKey, geometry));
-    } finally {
-      renderer.setRenderTarget(old);
-      quad.material.dispose();
-      trees.dispose();
-      detailTexture.dispose();
+    const scene = new T.Scene(),
+      camera = new T.OrthographicCamera(-1, 1, 1, -1, 0, 1),
+      quad = new T.Mesh(new T.PlaneGeometry(2, 2));
+    scene.add(quad);
+    own(quad.geometry);
+    own(quad.material);
+    const old = renderer.getRenderTarget();
+    if (!geometry) {
+      onProgress("Voxelizing eroded terrain & woodland", 0.08);
+      const detailRecord = await world.buildVoxelDetails(
+        world,
+        n,
+        origin,
+        volumeSize,
+        signal,
+      );
+      signal?.throwIfAborted();
+      mark("voxelDetailsMs");
+      onProgress("Baking indexed terrain & woodland occupancy", 0.12);
+      const detailTexture = data3D(detailRecord.data, n);
+      own(detailTexture);
+      const grid = detailRecord.treeGrid;
+      const trees = new T.DataTexture(
+        grid.data,
+        grid.width,
+        grid.height,
+        T.RGBAFormat,
+        T.FloatType,
+      );
+      lightingState.treeLookup = {
+        trees: grid.trees,
+        records: grid.records,
+        meanCandidates: grid.meanCandidates,
+      };
+      trees.needsUpdate = true;
+      own(trees);
+      quad.material = volumePass(
+        "occupancy",
+        {
+          ...uniforms,
+          trees: { value: trees },
+          details: { value: detailTexture },
+        },
+        TERRAIN_GRID,
+      );
+      own(quad.material);
+      await timed("occupancyPrepareMs", () =>
+        prepareForRender(
+          renderer,
+          scene,
+          camera,
+          scene,
+          target,
+          null,
+          0,
+          priority,
+        ),
+      );
+      try {
+        await timed("occupancySubmitMs", () =>
+          renderBakeSlices(
+            renderer,
+            scene,
+            camera,
+            target,
+            interactive,
+            signal,
+          ),
+        );
+        const packed = new Uint8Array(((n * n * n) / 2) * 4);
+        await timed("occupancyReadbackMs", () =>
+          readPixels(renderer, target, 0, 0, n, (n * n) / 2, packed),
+        );
+        geometry = {
+          data: await reorderVoxels(packed, n),
+          n,
+          kinds: detailRecord.kinds,
+          contributors: detailRecord.counts,
+          treeLookup: lightingState.treeLookup,
+        };
+        await timed("occupancyCacheMs", () => cache.put(geometryKey, geometry));
+      } finally {
+        renderer.setRenderTarget(old);
+        quad.material.dispose();
+        trees.dispose();
+        detailTexture.dispose();
+      }
     }
-  }
-  mark("occupancyMs");
-  lightingState.contributors = geometry.contributors;
-  lightingState.treeLookup = geometry.treeLookup || null;
-  const field = data3D(geometry.data, n);
-  const transportKey =
-    "transport:" +
-    (await digest(
-      geometryKey + nativeVolumeSource + tslBakeSource + "transport",
-    ));
-  let transport = await cache.get(transportKey);
-  lightingState.transportCacheHit = !!transport;
-  if (!transport) {
-    onProgress("Baking sky visibility & woodland bounce", 0.18);
-    const buffers = [];
+    mark("occupancyMs");
+    lightingState.contributors = geometry.contributors;
+    lightingState.treeLookup = geometry.treeLookup || null;
+    const field = data3D(geometry.data, n);
+    own(field);
+    const transportKey =
+      "transport:" +
+      (await digest(
+        geometryKey + nativeVolumeSource + tslBakeSource + "transport",
+      ));
+    let transport = await cache.get(transportKey);
+    signal?.throwIfAborted();
+    lightingState.transportCacheHit = !!transport;
+    if (!transport) {
+      onProgress("Baking sky visibility & woodland bounce", 0.18);
+      const buffers = [];
+      quad.material = volumePass(
+        "transport",
+        {
+          ...uniforms,
+          field: { value: field },
+          directionMode: { value: 0 },
+        },
+        TERRAIN_GRID,
+      );
+      own(quad.material);
+      await timed("transportPrepareMs", () =>
+        prepareForRender(
+          renderer,
+          scene,
+          camera,
+          scene,
+          target,
+          null,
+          0,
+          priority,
+        ),
+      );
+      try {
+        for (let mode = 0; mode < 2; mode++) {
+          quad.material.uniforms.directionMode.value = mode;
+          await timed(`transportSubmit${mode}Ms`, () =>
+            renderBakeSlices(
+              renderer,
+              scene,
+              camera,
+              target,
+              interactive,
+              signal,
+            ),
+          );
+          const pixels = new Uint8Array(((n * n * n) / 2) * 4);
+          await readPixels(renderer, target, 0, 0, n, (n * n) / 2, pixels);
+          buffers.push(pixels);
+        }
+      } finally {
+        renderer.setRenderTarget(old);
+        quad.material.dispose();
+      }
+      transport = { data: buffers[0], directions: buffers[1], n };
+      await cache.put(transportKey, transport);
+    }
+    mark("transportMs");
+    const transportMap = new T.DataTexture(
+      transport.data,
+      n,
+      (n * n) / 2,
+      T.RGBAFormat,
+    );
+    transportMap.needsUpdate = true;
+    own(transportMap);
+    transportMap.minFilter = transportMap.magFilter = T.LinearFilter;
+    const directionMap = new T.DataTexture(
+      transport.directions,
+      n,
+      (n * n) / 2,
+      T.RGBAFormat,
+    );
+    directionMap.needsUpdate = true;
+    own(directionMap);
+    directionMap.minFilter = directionMap.magFilter = T.LinearFilter;
+
+    lightingState.transportKey = transportKey;
+    lightingState.transportBakes = (lightingState.transportBakes || 0) + 1;
     quad.material = volumePass(
-      "transport",
+      "lighting",
       {
         ...uniforms,
         field: { value: field },
-        directionMode: { value: 0 },
+        transportMap: { value: transportMap },
+        sun: { value: sun.clone() },
+        daylight: lightUniforms.daylight,
+        sunColour: lightUniforms.sunColour,
+        lampColour: lightUniforms.liveLampColour,
+        lampPosition: { value: new T.Vector3() },
+        lampPower: { value: 0 },
       },
       TERRAIN_GRID,
     );
-    await timed("transportPrepareMs", () =>
+    const published = publishedLighting(renderer, n);
+    own(quad.material);
+    await timed("lightingPrepareMs", () =>
       prepareForRender(
         renderer,
         scene,
         camera,
         scene,
-        target,
+        published.target,
         null,
         0,
-        () => 180,
+        priority,
       ),
     );
-    try {
-      for (let mode = 0; mode < 2; mode++) {
-        quad.material.uniforms.directionMode.value = mode;
-        renderer.setRenderTarget(target);
-        renderer.render(scene, camera);
-        renderer.setRenderTarget(old);
-        const pixels = new Uint8Array(((n * n * n) / 2) * 4);
-        await readPixels(renderer, target, 0, 0, n, (n * n) / 2, pixels);
-        buffers.push(pixels);
-      }
-    } finally {
-      renderer.setRenderTarget(old);
-      quad.material.dispose();
+    // This binding is consumed by the world, not by the lighting bake pass.
+    // Make it resident before publishing the matching volume origin/dimensions.
+    await uploadTextures(renderer, [directionMap, published.directions]);
+    signal?.throwIfAborted();
+    // Copy into a stable DataTexture to preserve canonical row orientation on
+    // both backends. No await between publication and the matching radiance pass.
+    renderer.copyTextureToTexture(directionMap, published.directions);
+    if (active) {
+      void retireLightingInputs(renderer, [
+        active.field,
+        active.transportMap,
+        active.material,
+        active.quad.geometry,
+      ]);
     }
-    transport = { data: buffers[0], directions: buffers[1], n };
-    await cache.put(transportKey, transport);
-  }
-  mark("transportMs");
-  const transportMap = new T.DataTexture(
-    transport.data,
-    n,
-    (n * n) / 2,
-    T.RGBAFormat,
-  );
-  transportMap.needsUpdate = true;
-  transportMap.minFilter = transportMap.magFilter = T.LinearFilter;
-  const directionMap = new T.DataTexture(
-    transport.directions,
-    n,
-    (n * n) / 2,
-    T.RGBAFormat,
-  );
-  directionMap.needsUpdate = true;
-  directionMap.minFilter = directionMap.magFilter = T.LinearFilter;
-
-  lightingState.transportKey = transportKey;
-  lightingState.transportBakes = (lightingState.transportBakes || 0) + 1;
-  quad.material = volumePass(
-    "lighting",
-    {
-      ...uniforms,
-      field: { value: field },
-      transportMap: { value: transportMap },
-      sun: { value: sun.clone() },
-      daylight: lightUniforms.daylight,
-      sunColour: lightUniforms.sunColour,
-      lampColour: lightUniforms.liveLampColour,
-      lampPosition: { value: new T.Vector3() },
-      lampPower: { value: 0 },
-    },
-    TERRAIN_GRID,
-  );
-  const published = publishedLighting(renderer, n);
-  await timed("lightingPrepareMs", () =>
-    prepareForRender(
-      renderer,
+    void retireLightingInputs(renderer, [target, directionMap]);
+    active = {
+      target: published.target,
+      field,
+      geometry,
+      directionMap: published.directions,
+      transport,
+      transportMap,
+      origin,
       scene,
       camera,
-      scene,
-      published.target,
-      null,
-      0,
-      () => 180,
-    ),
-  );
-  // This binding is consumed by the world, not by the lighting bake pass.
-  // Make it resident before publishing the matching volume origin/dimensions.
-  await uploadTextures(renderer, [directionMap, published.directions]);
-  // Copy into a stable DataTexture to preserve canonical row orientation on
-  // both backends. No await between publication and the matching radiance pass.
-  renderer.copyTextureToTexture(directionMap, published.directions);
-  if (active) {
-    void retireLightingInputs(renderer, [
-      active.field,
-      active.transportMap,
-      active.material,
-      active.quad.geometry,
-    ]);
-  }
-  void retireLightingInputs(renderer, [target, directionMap]);
-  active = {
-    target: published.target,
-    field,
-    geometry,
-    directionMap: published.directions,
-    transport,
-    transportMap,
-    origin,
-    scene,
-    camera,
-    quad,
-    material: quad.material,
-    cachedTexture: null,
-  };
-  lightUniforms.directionAtlas.value = published.directions;
-  lightUniforms.volumeMin.value.copy(origin);
-  lightUniforms.bakeDims.value.copy(dims);
-  refreshLighting(
-    renderer,
-    lightUniforms.liveSunDirection.value,
-    lightUniforms.liveLampPosition.value,
-    lightUniforms.liveLampPower.value,
-  );
-  lightUniforms.bakedEnabled.value = 1;
-  lightingState.geometryKey = geometryKey;
-  lightingState.n = n;
-  const key =
-    "lighting:" +
-    (await digest(
-      geometryKey +
-        sun.toArray().join(",") +
-        nativeVolumeSource +
-        tslBakeSource +
-        "lighting",
-    ));
-  let record = await cache.get(key);
-  const cached = !!record;
-  onProgress(
-    cached ? "Restoring cached lighting" : "Baking sky, sun & diffuse bounce",
-    0.24,
-  );
-  if (!record) {
+      quad,
+      material: quad.material,
+      cachedTexture: null,
+    };
+    publishedResult = true;
+    lightUniforms.directionAtlas.value = published.directions;
+    lightUniforms.volumeMin.value.copy(origin);
+    lightUniforms.bakeDims.value.copy(dims);
     refreshLighting(
       renderer,
       lightUniforms.liveSunDirection.value,
       lightUniforms.liveLampPosition.value,
       lightUniforms.liveLampPower.value,
     );
-    const data = new Uint8Array(((n * n * n) / 2) * 4);
-    await readPixels(renderer, active.target, 0, 0, n, (n * n) / 2, data);
-    record = { data, n, key };
-    await cache.put(key, record);
+    lightUniforms.bakedEnabled.value = 1;
+    lightingState.geometryKey = geometryKey;
+    lightingState.n = n;
+    // Streaming always uses current radiance. A historical sun/torch snapshot is
+    // never read for display, so don't read it back and write it to IDB on the walk.
+    if (interactive)
+      return {
+        key: geometryKey,
+        ms: performance.now() - start,
+        stages: { ...stages, lightingMs: performance.now() - stageStart },
+        operations,
+        bytes: n * n * n * 2,
+        cached: lightingState.transportCacheHit,
+      };
+    const key =
+      "lighting:" +
+      (await digest(
+        geometryKey +
+          sun.toArray().join(",") +
+          nativeVolumeSource +
+          tslBakeSource +
+          "lighting",
+      ));
+    let record = await cache.get(key);
+    const cached = !!record;
+    onProgress(
+      cached ? "Restoring cached lighting" : "Baking sky, sun & diffuse bounce",
+      0.24,
+    );
+    if (!record) {
+      refreshLighting(
+        renderer,
+        lightUniforms.liveSunDirection.value,
+        lightUniforms.liveLampPosition.value,
+        lightUniforms.liveLampPower.value,
+      );
+      const data = new Uint8Array(((n * n * n) / 2) * 4);
+      await readPixels(renderer, active.target, 0, 0, n, (n * n) / 2, data);
+      record = { data, n, key };
+      await cache.put(key, record);
+    }
+    // Cache occupancy and transport, but never present a radiance snapshot from
+    // another time/light state. Regenerate this cheap pass after any cache await.
+    refreshLighting(
+      renderer,
+      lightUniforms.liveSunDirection.value,
+      lightUniforms.liveLampPosition.value,
+      lightUniforms.liveLampPower.value,
+    );
+    return {
+      key,
+      ms: performance.now() - start,
+      stages: { ...stages, lightingMs: performance.now() - stageStart },
+      operations,
+      bytes: record.data.byteLength,
+      cached,
+    };
+  } finally {
+    if (!publishedResult) await retireLightingInputs(renderer, [...owned]);
   }
-  // Cache occupancy and transport, but never present a radiance snapshot from
-  // another time/light state. Regenerate this cheap pass after any cache await.
-  refreshLighting(
-    renderer,
-    lightUniforms.liveSunDirection.value,
-    lightUniforms.liveLampPosition.value,
-    lightUniforms.liveLampPower.value,
-  );
-  return {
-    key,
-    ms: performance.now() - start,
-    stages: { ...stages, lightingMs: performance.now() - stageStart },
-    operations,
-    bytes: record.data.byteLength,
-    cached,
-  };
 }
 export async function readLighting(renderer) {
   if (!active) return null;

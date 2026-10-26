@@ -1,5 +1,6 @@
 import { MathUtils } from "three/webgpu";
 import { requestGrassAhead } from "./grass-stream-queue.js";
+import { prioritizeArea, updateStreamingView } from "./streaming-view.js";
 const handoffMs = 240;
 const preparing = new WeakSet();
 
@@ -93,6 +94,7 @@ export function updateLOD(
   scene,
   now = performance.now(),
 ) {
+  if (camera.projectionMatrix) updateStreamingView(camera);
   const previous = items.lodState,
     position = camera.position,
     revision = items.lodRevision || 0;
@@ -138,6 +140,16 @@ export function updateLOD(
   for (const c of candidates) {
     const d = c.center.distanceTo(camera.position);
     c.priority = d;
+    if (c.kind === "tree") {
+      if (d > Math.max(720, distances[2] + 96) && !c.lodBlend?.weights[2])
+        c.releaseMiddle?.();
+      for (let i = 0; i < 2; i++) {
+        // Retain a generous return buffer and never retire a visible fade source.
+        const outside = d > (force >= 0 ? 720 : distances[i] + 96);
+        if (outside && !c.lodBlend?.weights[i] && c.keepDetail?.[i])
+          c.releaseDetail?.(i);
+      }
+    }
     if (c.kind === "grass" && d > 360) {
       counts[3]++;
       if (
@@ -220,7 +232,13 @@ export function updateLOD(
       if (object && items.prepareGroup && !preparing.has(object)) {
         preparing.add(object);
         items
-          .prepareGroup(object)
+          .prepareGroup(object, () => {
+            const distance = c.priority ?? d;
+            return distance <=
+              (i === 0 ? 181 : i === 1 ? 286 : i === 2 ? 720 : Infinity)
+              ? prioritizeArea(c.center, distance)
+              : Infinity;
+          })
           .catch(() => {})
           .finally(() => preparing.delete(object));
       }

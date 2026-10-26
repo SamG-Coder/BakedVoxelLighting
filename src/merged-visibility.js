@@ -13,6 +13,8 @@ import * as T from "three/webgpu";
 import { BakeCache } from "./cache.js";
 import { decorate, fadeMaterial } from "./lighting.js";
 import { replaceLODLevel } from "./vegetation-lod.js";
+import { disposeVegetationGroup } from "./vegetation-resources.js";
+import { prioritizeArea } from "./streaming-view.js";
 
 const cache = new BakeCache("BakedVoxelLightingMerged");
 const ready = cache.open();
@@ -26,6 +28,7 @@ export const mergedStats = {
   sourceDraws: 0,
   mergedDraws: 0,
   errors: [],
+  cancelled: 0,
 };
 let mergedTemplate = null;
 let atlas = null,
@@ -118,13 +121,22 @@ async function install(c, record, clusters, version) {
   group.add(mesh);
   group.visible = false;
   // Do not publish an uncompiled replacement into the next frame.
-  if (!clusters.startupMerge) await clusters.prepareGroup?.(group);
-  if (version !== generation) {
+  const wanted = () =>
+    version === generation &&
+    (clusters.startupMerge ||
+      (c.levels[3]?.visible && frustum.intersectsSphere(bounds.get(c))));
+  if (!clusters.startupMerge)
+    await clusters.prepareGroup?.(group, () =>
+      wanted() ? prioritizeArea(c.center, c.priority ?? 1000) : Infinity,
+    );
+  if (!wanted()) {
+    mergedStats.cancelled++;
     g.dispose();
     mesh.material.dispose();
     return;
   }
-  c.unmergedFar = replaceLODLevel(c, 3, group);
+  disposeVegetationGroup(replaceLODLevel(c, 3, group));
+  c.farMerged = true;
   mergedStats.baked++;
   clusters.lodRevision = (clusters.lodRevision || 0) + 1;
 }
@@ -144,7 +156,7 @@ export function updateMergedVisibility(
     mergedStats.baked = 0;
     mergedStats.hits = 0;
     for (const c of clusters) {
-      c.unmergedFar = null;
+      c.farMerged = false;
       c.sourceFarDraws = new Set(c.trees.map((t) => t.variant)).size;
       const box = mergedClusterBounds(
         c.trees,
@@ -181,7 +193,7 @@ export function updateMergedVisibility(
       continue;
     mergedStats.visible++;
     mergedStats.sourceDraws += c.sourceFarDraws;
-    if (c.unmergedFar) {
+    if (c.farMerged) {
       mergedStats.mergedDraws++;
       if (c.levels[3].parent !== scene) scene.add(c.levels[3]);
     } else if (!pending.has(c)) {

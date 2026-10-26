@@ -244,9 +244,11 @@ export function instanced(geometry, material, transforms) {
   return mesh;
 }
 export function surfaceBillboards(atlas, transforms, transmission = 0.32) {
-  return instanced(
+  const mesh = instanced(
     new T.PlaneGeometry(atlas.record.width, atlas.record.height),
     atlasMaterial(atlas, transmission),
     transforms,
   );
+  mesh.userData.ownedGeometry = true;
+  return mesh;
 }

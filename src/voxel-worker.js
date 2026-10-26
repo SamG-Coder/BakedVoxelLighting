@@ -1,14 +1,21 @@
 import { buildVoxelTreeGrid } from "./voxel-tree-grid.js";
 import { Vector3 } from "three/src/math/Vector3.js";
 import { BakeCache } from "./cache.js";
-import { buildVoxelDetails } from "./voxel-core.js";
+import { buildVoxelDetailsStreamed } from "./voxel-core.js";
 import { generateGrassBatches, grassLand } from "./grass-data.js";
 import { sampleTerrainRegion } from "./terrain-snapshot.js";
 
 const cache = new BakeCache("BakedGrassBlocks-v2"),
   ready = cache.open();
 let treePrototypes, materialProfiles;
+const cancelled = new Set(),
+  running = new Set();
 self.onmessage = async ({ data: job }) => {
+  if (job.type === "cancel") {
+    if (running.has(job.id)) cancelled.add(job.id);
+    return;
+  }
+  running.add(job.id);
   const started = performance.now();
   try {
     let result,
@@ -42,26 +49,6 @@ self.onmessage = async ({ data: job }) => {
       if (!treePrototypes)
         throw new Error("Voxel worker must be initialized before baking");
       await ready;
-      const records = new Map();
-      let next = 0;
-      // Overlap reads, but bound decoded tile memory and IndexedDB requests.
-      await Promise.all(
-        Array.from({ length: Math.min(8, job.grass.length) }, async () => {
-          while (next < job.grass.length) {
-            const p = job.grass[next++];
-            const key = `${job.identity}:${p.x}:${p.z}:${p.seed}:0`;
-            let batches = await cache.get(key);
-            if (!batches) {
-              const land = grassLand(p.x, p.z, (x, z) =>
-                sampleTerrainRegion(job.terrain, x, z),
-              );
-              batches = generateGrassBatches({ ...p, level: 0, land });
-              await cache.put(key, batches);
-            }
-            records.set(p, batches);
-          }
-        }),
-      );
       const world = {
         treePrototypes,
         materialProfiles,
@@ -71,7 +58,28 @@ self.onmessage = async ({ data: job }) => {
           objects: { query: () => job.objects },
         },
       };
-      result = buildVoxelDetails(world, job.n, job.min, job.size, records);
+      result = await buildVoxelDetailsStreamed(
+        world,
+        job.n,
+        job.min,
+        job.size,
+        async (p) => {
+          if (cancelled.has(job.id))
+            throw new DOMException("Stale voxel area", "AbortError");
+          const key = `${job.identity}:${p.x}:${p.z}:${p.seed}:0`;
+          let batches = await cache.get(key);
+          if (cancelled.has(job.id))
+            throw new DOMException("Stale voxel area", "AbortError");
+          if (!batches) {
+            const land = grassLand(p.x, p.z, (x, z) =>
+              sampleTerrainRegion(job.terrain, x, z),
+            );
+            batches = generateGrassBatches({ ...p, level: 0, land });
+            await cache.put(key, batches);
+          }
+          return batches;
+        },
+      );
       result.treeGrid = buildVoxelTreeGrid(job.trees, job.n, job.min, job.size);
       transfer = [
         result.data.buffer,
@@ -85,5 +93,8 @@ self.onmessage = async ({ data: job }) => {
     );
   } catch (error) {
     self.postMessage({ id: job.id, error: error.stack || error.message });
+  } finally {
+    running.delete(job.id);
+    cancelled.delete(job.id);
   }
 };

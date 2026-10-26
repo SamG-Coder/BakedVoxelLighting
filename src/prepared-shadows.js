@@ -37,6 +37,7 @@ export class ResidentPointShadow extends PointShadowNode {
       super.renderShadow(frame);
     } finally {
       scene.children = children;
+      this.casterRoots.length = 0;
     }
   }
 }
@@ -99,7 +100,12 @@ export class PreparedSunShadow extends ShadowNode {
       material.alphaTest = source.alphaTest;
       material.userData.fade = source.userData.fade;
       this.materials.set(source, material);
-      source.addEventListener("dispose", () => material.dispose());
+      const dispose = () => {
+        material.dispose();
+        this.materials.delete(source);
+        source.removeEventListener("dispose", dispose);
+      };
+      source.addEventListener("dispose", dispose);
     }
     return material;
   }
@@ -148,7 +154,7 @@ export class PreparedSunShadow extends ShadowNode {
       );
     };
   }
-  async prepare(renderer, object, scene) {
+  async prepare(renderer, object, scene, priority = () => 1000) {
     if (!this.shadowMap) return;
     this.shadow.updateMatrices(this.light);
     const meshes = [];
@@ -162,6 +168,7 @@ export class PreparedSunShadow extends ShadowNode {
           meshes.push(mesh);
       });
     for (const mesh of meshes) {
+      if (!Number.isFinite(priority())) return;
       const material = this.materialFor(mesh.material);
       if (this.prepared.get(mesh) === material) continue;
       this.stats.pending++;
@@ -174,7 +181,9 @@ export class PreparedSunShadow extends ShadowNode {
           this.shadowMap,
           material,
           2,
+          priority,
         );
+        if (!Number.isFinite(priority())) return;
         this.prepared.set(mesh, material);
         this.stats.prepared++;
       } finally {

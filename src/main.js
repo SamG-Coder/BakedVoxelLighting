@@ -46,6 +46,7 @@ import {
   finishGrassJobs,
   startGrassJobs,
   grassStreamingStats,
+  treeStreamingStats,
 } from "./vegetation.js";
 import atlasWorkerSource from "./atlas-worker.js?raw";
 import { setShaderBackend, nativeVolumeSource } from "./native-kernels.js";
@@ -583,6 +584,7 @@ $("clear").onclick = async () => {
   cacheLabel();
   $("status").textContent = "Project cache cleared";
 };
+let streamingBake = null;
 async function bake() {
   if (diagnostics.baking) return;
   baking = !loopStarted;
@@ -590,6 +592,8 @@ async function bake() {
   $("bake").disabled = true;
   $("clear").disabled = true;
   const start = performance.now();
+  const controller = new AbortController();
+  streamingBake = controller;
   try {
     const areaX = Math.round(camera.position.x / 64) * 64,
       areaZ = Math.round(camera.position.z / 64) * 64;
@@ -607,6 +611,8 @@ async function bake() {
       sunDirection,
       assetHash,
       progress,
+      loopStarted,
+      controller.signal,
     );
     await bakeTreeHLOD(
       renderer,
@@ -624,6 +630,7 @@ async function bake() {
       hits: cache.hits,
       misses: cache.misses,
     });
+    if (diagnostics.bakes.length > 128) diagnostics.bakes.shift();
     diagnostics.volumeKey = result.key;
     diagnostics.ready = true;
     diagnostics.treeCount = world.trees.length;
@@ -645,10 +652,12 @@ async function bake() {
     cacheLabel();
     lightDirty = true;
   } catch (e) {
-    fail(e);
+    if (e.name !== "AbortError") fail(e);
+    else diagnostics.cancelledBakes = (diagnostics.cancelledBakes || 0) + 1;
   } finally {
     baking = false;
     diagnostics.baking = false;
+    if (streamingBake === controller) streamingBake = null;
     $("bake").disabled = false;
     $("clear").disabled = false;
   }
@@ -1081,6 +1090,7 @@ function animate(now) {
   diagnostics.mergedVisibility = mergedStats;
   diagnostics.grassBake = grassBakeStats;
   diagnostics.grassStreaming = grassStreamingStats;
+  diagnostics.treeStreaming = treeStreamingStats;
   diagnostics.preparation = {
     voxel: voxelWorkerStats,
     merged: mergedWorkerStats,
@@ -1115,6 +1125,19 @@ function animate(now) {
     };
     diagnostics.lighting = { ...lightingState, dynamic };
     diagnostics.camera = camera.position.toArray();
+    diagnostics.streamingMemory = {
+      heapBytes: performance.memory?.usedJSHeapSize ?? null,
+      gpuPagedBytes: gpuUploads.stats.allocatedBytes,
+      textures: renderer.info.memory.textures,
+      geometries: renderer.info.memory.geometries,
+      renderObjects: renderer._objects._renderObjects.size,
+      shaderStates: renderer._nodes.nodeBuilderCache.size,
+      treeDetailGroups: clusters.reduce(
+        (count, c) => count + Number(!!c.levels[0]) + Number(!!c.levels[1]),
+        0,
+      ),
+      grassActiveTiles: grass.patches.active.size,
+    };
     $("fps").textContent = diagnostics.fps || "—";
     $("fps").title =
       `Delivered animation rate; ${diagnostics.frameTiming.frameMs.toFixed(2)} ms between callbacks, ${diagnostics.frameTiming.cpuMs.toFixed(2)} ms average CPU submission. This is not measured panel Hz or GPU time.`;
@@ -1123,8 +1146,19 @@ function animate(now) {
       `Trees ${diagnostics.treeLevels.join(" / ")} · ${lightingState.updates} light updates — ${mergedStats.mergedDraws}/${mergedStats.visible} far clusters merged`;
     frameTime = now;
   }
-  const cx = volumeMin.x + 128,
-    cz = volumeMin.z + 128;
+  const streamingOrigin = diagnostics.baking
+    ? volumeMin
+    : lightUniforms.volumeMin.value;
+  const cx = streamingOrigin.x + 128,
+    cz = streamingOrigin.z + 128;
+  if (
+    diagnostics.baking &&
+    (Math.abs(camera.position.x - cx) > 112 ||
+      Math.abs(camera.position.z - cz) > 112)
+  )
+    streamingBake?.abort(
+      new DOMException("Streaming area no longer nearby", "AbortError"),
+    );
   if (
     Math.abs(camera.position.x - cx) > 64 ||
     Math.abs(camera.position.z - cz) > 64
@@ -1159,10 +1193,18 @@ window.worldTest = {
   routes,
   world,
 };
-// Local capture harnesses can render every output frame at a fixed time without
-// making dropped live frames part of an exported movie. Removed in production.
-if (import.meta.env.DEV)
+// Capture controls are opt-in. Live showcase recording uses resume(); the manual
+// render entry point is used only to settle the starting view and by local tests.
+const showcaseRequested = new URLSearchParams(location.search).get("showcase") === "1";
+if (import.meta.env.DEV || showcaseRequested)
   window.worldTest.capture = {
+    resize(width, height) {
+      renderer.setPixelRatio(1);
+      renderer.setSize(width, height, false);
+      composer.setSize(width, height);
+      camera.aspect = width / height;
+      camera.updateProjectionMatrix();
+    },
     pause() {
       capturePaused = true;
       if (animationId !== null) cancelAnimationFrame(animationId);
@@ -1231,27 +1273,38 @@ async function start() {
   );
   clusters = await buildTrees(world, assets, geometryIdentity, progress);
   grass = buildGrass(assets);
-  clusters.prepareGroup = (group) => {
+  clusters.prepareGroup = (group, priority = () => 1000) => {
     if (group.userData.pipelineReady) return Promise.resolve();
     if (group.userData.preparation) return group.userData.preparation;
     group.userData.preparation = (async () => {
-      await prepareForRender(
-        renderer,
-        group,
-        camera,
-        scene,
-        composer.sceneTarget,
-        null,
-        1,
-      );
-      await preparedSunShadow.prepare(renderer, group, scene);
+      group.updateMatrixWorld(true);
+      group.userData.hasPreparedResources = true;
+      for (const mesh of group.children.length ? group.children : [group]) {
+        if (!Number.isFinite(priority())) return;
+        await prepareForRender(
+          renderer,
+          mesh,
+          camera,
+          scene,
+          composer.sceneTarget,
+          null,
+          1,
+          priority,
+        );
+      }
+      if (!Number.isFinite(priority())) return;
+      await preparedSunShadow.prepare(renderer, group, scene, priority);
+      if (!Number.isFinite(priority())) return;
       group.userData.pipelineReady = true;
       clusters.lodRevision = (clusters.lodRevision || 0) + 1;
-    })().catch((error) => {
-      group.userData.preparation = null;
-      fail(error);
-      throw error;
-    });
+    })()
+      .catch((error) => {
+        fail(error);
+        throw error;
+      })
+      .finally(() => {
+        group.userData.preparation = null;
+      });
     return group.userData.preparation;
   };
   // Worker completions arrive in a small burst. Compile/upload that page together
@@ -1410,5 +1463,9 @@ async function start() {
   loopStarted = true;
   startGrassJobs();
   scheduleFrame();
+  if (showcaseRequested) {
+    const { installShowcase } = await import("./showcase.js");
+    installShowcase(window.worldTest, diagnostics);
+  }
 }
 start().catch(fail);

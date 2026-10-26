@@ -1,5 +1,6 @@
 // Keep the worker fed while previous tiles wait for renderer/GPU residency.
 // Renderer preparation still serializes GPU state and enforces upload credits.
+import { prioritizeArea } from "./streaming-view.js";
 export class GrassStreamQueue {
   constructor({ concurrency = 4, schedule = (fn) => setTimeout(fn, 0) } = {}) {
     this.concurrency = concurrency;
@@ -54,7 +55,9 @@ export class GrassStreamQueue {
     });
     this.stats.queued = this.jobs.length;
     this.jobs.sort(
-      (a, b) => a.p.requestPriority[a.level] - b.p.requestPriority[b.level],
+      (a, b) =>
+        prioritizeArea(a.p.center, a.p.requestPriority[a.level]) -
+        prioritizeArea(b.p.center, b.p.requestPriority[b.level]),
     );
     while (this.jobs.length && this.running < this.concurrency) {
       const job = this.jobs.shift(),

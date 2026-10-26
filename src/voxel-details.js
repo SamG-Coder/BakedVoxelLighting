@@ -30,8 +30,9 @@ function prepare(world) {
     );
   return prepared.get(world);
 }
-export async function buildVoxelDetailsAsync(world, n, min, size) {
+export async function buildVoxelDetailsAsync(world, n, min, size, signal) {
   await prepare(world);
+  signal?.throwIfAborted();
   // Area indexes select overlapping objects, never the whole 16 km² world.
   const query = (index) =>
     index.query(min.x, min.z, min.x + size.x, min.z + size.z);
@@ -59,6 +60,7 @@ export async function buildVoxelDetailsAsync(world, n, min, size) {
       terrain,
     },
     [terrain.pixels.buffer, terrain.roots.buffer, terrain.canopy.buffer],
+    signal,
   );
 }
 export function reorderVoxels(packed, n) {

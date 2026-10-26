@@ -70,7 +70,7 @@ function* voxelDetailChunks(world, n, min, size, grassRecords) {
       Math.abs(patch.z - (min.z + size.z / 2)) > size.z / 2 + 14
     )
       continue;
-    yield;
+    yield { grass: patch };
     if (!grassRecords) {
       const points = world.grassPoints(patch.x, patch.z, patch.seed);
       for (let type = 0; type < points.length; type++)
@@ -232,4 +232,25 @@ export function buildVoxelDetails(...args) {
     r = it.next();
   } while (!r.done);
   return r.value;
+}
+
+// Consume one decoded grass block at a time in the worker. Keeping every block
+// in a volume alive at once made boundary crossings spike temporary heap use.
+export async function buildVoxelDetailsStreamed(
+  world,
+  n,
+  min,
+  size,
+  loadGrass,
+) {
+  const records = new Map();
+  const it = voxelDetailChunks(world, n, min, size, records);
+  let result;
+  do {
+    result = it.next();
+    records.clear();
+    if (result.value?.grass)
+      records.set(result.value.grass, await loadGrass(result.value.grass));
+  } while (!result.done);
+  return result.value;
 }

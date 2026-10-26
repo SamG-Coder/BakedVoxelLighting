@@ -4,13 +4,19 @@ import * as K from "./native-kernels.js";
 import * as T from "three/webgpu";
 import * as N from "three/tsl";
 import { ref, texRef, terrainNode } from "./tsl-baking.js";
+import { attributeInstanceMatrix } from "./attribute-instances.js";
 const matrices = new WeakMap();
 const instanceMatrix = N.Fn((builder) => {
+  if (builder.object.isAttributeInstances) return attributeInstanceMatrix();
   const source = builder.object.instanceMatrix;
   if (!source) return N.mat4(1);
   let node = matrices.get(source);
   if (!node) {
     const buffer = new T.InstancedInterleavedBuffer(source.array, 16, 1);
+    // Pooled tiles keep the same arrays but replace their contents.
+    N.OnBeforeFrameUpdate(() => {
+      buffer.version = source.version;
+    });
     node = N.mat4(
       ...[0, 4, 8, 12].map((offset) =>
         N.instancedBufferAttribute(buffer, "vec4", 16, offset),
@@ -86,7 +92,7 @@ export function fadeTSL(material) {
   // Preserve the cutoff explicitly when cloning shared material templates.
   material.alphaTest = material.userData.alphaCutoff ?? material.alphaTest;
   material.userData.fade = { value: new T.Vector2(0, 1) };
-  if (!material.userData.surfaceMask)
+  if (!material.userData.surfaceMask && !material.userData.fadeMaskReady) {
     material.maskNode =
       material.map && material.alphaTest > 0
         ? fadeMask.and(
@@ -95,6 +101,8 @@ export function fadeTSL(material) {
             ),
           )
         : fadeMask;
+    material.userData.fadeMaskReady = true;
+  }
   if (material.alphaTest > 0) material.alphaToCoverage = true;
   return material;
 }
@@ -162,10 +170,10 @@ function createDecorated(original, options, U, grid) {
   m.userData.grassAtlas = grassAtlas;
   if (wind)
     m.positionNode = N.Fn((builder) => {
-      const id = builder.object.isInstancedMesh
+      const id = (builder.object.isInstancedMesh || builder.object.isAttributeInstances)
         ? N.float(N.instanceIndex)
         : N.float(0);
-      const anchor = builder.object.isInstancedMesh
+      const anchor = (builder.object.isInstancedMesh || builder.object.isAttributeInstances)
         ? N.modelWorldMatrix.mul(instanceMatrix().element(3)).xyz
         : N.modelWorldMatrix.element(3).xyz;
       return K.windPosition({

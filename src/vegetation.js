@@ -17,6 +17,11 @@ export { grassHabitat } from "./habitat.js";
 import { prepareAtlasMips } from "./atlas-mips.js";
 import { buildGrassBatches } from "./grass-jobs.js";
 import { GrassStreamQueue } from "./grass-stream-queue.js";
+import { PreparationQueue } from "./preparation-queue.js";
+import { VegetationInstancePool } from "./vegetation-instance-pool.js";
+import { AttributeInstances } from "./attribute-instances.js";
+import { prioritizeArea } from "./streaming-view.js";
+import { disposeVegetationGroup as removeLevel } from "./vegetation-resources.js";
 import * as T from "three/webgpu";
 import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
 import { random, height } from "./world-data.js";
@@ -32,6 +37,16 @@ import {
   atlasMaterial,
 } from "./impostors.js";
 const card = new T.PlaneGeometry(1, 1);
+const treeBuildQueue = new PreparationQueue();
+export const treeStreamingStats = {
+  pending: 0,
+  completed: 0,
+  cancelled: 0,
+  buildMs: 0,
+  prepareMs: 0,
+  maxBuildMs: 0,
+  maxPrepareMs: 0,
+};
 function mergedLeaves(items) {
   const dummy = new T.Object3D(),
     parts = [];
@@ -157,24 +172,40 @@ export async function buildTrees(world, assets, identity, progress = () => {}) {
     p.height = size.y * 1.06;
     prototypes.push(p);
   }
+  const treePool = new VegetationInstancePool();
+  treeStreamingStats.pool = treePool.stats;
   const clusters = world.clusters.map((c) => {
     const levels = [null, null];
-    const makeLevel = (level) => {
+    const makeLevel = async (level, wanted = () => true) => {
       const group = new T.Group();
+      const byVariant = Array.from({ length: TREE_VARIANTS }, () => []);
+      for (const t of c.trees)
+        byVariant[t.variant].push({
+          p: [t.x, t.y, t.z],
+          r: [0, t.rotation, 0],
+          s: [t.scale, t.scale, t.scale],
+          colour: treeTint(t.seed),
+        });
       for (let i = 0; i < TREE_VARIANTS; i++) {
-        const transforms = c.trees
-          .filter((t) => t.variant === i)
-          .map((t) => ({
-            p: [t.x, t.y, t.z],
-            r: [0, t.rotation, 0],
-            s: [t.scale, t.scale, t.scale],
-            colour: treeTint(t.seed),
-          }));
-        if (!transforms.length) continue;
-        const p = prototypes[i],
-          m = plantMaterials(assets, p.species);
-        const trunk = instanced(level ? p.low : p.high, m[0], transforms),
-          leaves = instanced(p.foliage, m[1], transforms);
+        if (!wanted()) {
+          treePool.releaseGroup(group);
+          return null;
+        }
+        if (!byVariant[i].length) continue;
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        const transforms = byVariant[i];
+        const p = prototypes[i];
+        const material = (index) => {
+          const materials = plantMaterials(assets, p.species);
+          materials[1 - index].dispose();
+          return materials[index];
+        };
+        const trunk = treePool.acquire(
+            level ? p.low : p.high,
+            () => material(0),
+            transforms,
+          ),
+          leaves = treePool.acquire(p.foliage, () => material(1), transforms);
         trunk.castShadow = leaves.castShadow = true;
         trunk.receiveShadow = leaves.receiveShadow = true;
         group.add(trunk, leaves);
@@ -188,40 +219,105 @@ export async function buildTrees(world, assets, identity, progress = () => {}) {
       center: new T.Vector3(c.x, height(c.x, c.z) + 8, c.z),
       kind: "tree",
     };
-    const pending = new Set();
+    const pending = new Map();
+    const generations = [0, 0];
+    entry.keepDetail = [true, true];
+    entry.releaseMiddle = () => {
+      const group = levels[2];
+      if (
+        !group?.userData.hasPreparedResources ||
+        group.visible ||
+        group.userData.preparation
+      )
+        return;
+      // Reusing a disposed object's cached node attributes leaves stale backend
+      // bindings. A fresh CPU clone retains the exact atlas/instances, not GPU state.
+      const replacement = group.clone();
+      replacement.traverse((mesh) => {
+        if (!mesh.isMesh) return;
+        mesh.material = fadeMaterial(mesh.material.clone());
+        if (mesh.userData.ownedGeometry) mesh.geometry = mesh.geometry.clone();
+      });
+      replacement.userData.pipelineReady = false;
+      replacement.userData.hasPreparedResources = false;
+      replacement.userData.preparation = null;
+      levels[2] = replacement;
+      removeLevel(group);
+    };
+    entry.releaseDetail = (level) => {
+      entry.keepDetail[level] = false;
+      generations[level]++;
+      treePool.releaseGroup(levels[level]);
+      levels[level] = null;
+    };
     entry.ensure = (level) => {
+      entry.keepDetail[level] = true;
       if (level > 1 || levels[level] || pending.has(level)) return;
-      pending.add(level);
+      const generation = generations[level];
+      pending.set(level, generation);
+      treeStreamingStats.pending++;
+      const wanted = () =>
+        generation === generations[level] && entry.keepDetail[level];
+      const priority = () =>
+        wanted()
+          ? prioritizeArea(entry.center, (entry.priority ?? 1000) * 0.25)
+          : Infinity;
       // Instantiate only nearby high-detail batches, between frames. Keep the
       // prepared far representation until both pipeline and pages are resident.
-      setTimeout(async () => {
-        try {
-          const group = makeLevel(level);
-          await clusters.prepareGroup?.(group);
-          levels[level] = group;
+      treeBuildQueue
+        .run(async () => {
+          const start = performance.now();
+          const group = await makeLevel(level, wanted);
+          const ms = performance.now() - start;
+          treeStreamingStats.buildMs += ms;
+          treeStreamingStats.maxBuildMs = Math.max(
+            treeStreamingStats.maxBuildMs,
+            ms,
+          );
+          return group;
+        }, priority)
+        .then(async (group) => {
+          if (!group) {
+            treeStreamingStats.cancelled++;
+            return;
+          }
+          const start = performance.now();
+          try {
+            if (!wanted()) {
+              treeStreamingStats.cancelled++;
+              return;
+            }
+            // CPU construction of the next cluster can proceed while this one
+            // waits in the shared, prioritized GPU preparation queue.
+            await clusters.prepareGroup?.(group, priority);
+            if (!wanted()) {
+              treeStreamingStats.cancelled++;
+              return;
+            }
+            levels[level] = group;
+            group = null;
+            treeStreamingStats.completed++;
+          } finally {
+            const ms = performance.now() - start;
+            treeStreamingStats.prepareMs += ms;
+            treeStreamingStats.maxPrepareMs = Math.max(
+              treeStreamingStats.maxPrepareMs,
+              ms,
+            );
+            treePool.releaseGroup(group);
+          }
+        })
+        .catch(console.error)
+        .finally(() => {
+          if (pending.get(level) === generation) pending.delete(level);
+          treeStreamingStats.pending--;
           clusters.lodRevision = (clusters.lodRevision || 0) + 1;
-        } catch (error) {
-          console.error(error);
-        } finally {
-          pending.delete(level);
-        }
-      }, 0);
+        });
     };
     return entry;
   });
   clusters.prototypes = prototypes;
   return clusters;
-}
-function removeLevel(group) {
-  if (!group) return;
-  group.removeFromParent();
-  group.traverse((o) => {
-    if (o.isMesh) {
-      if (o.isInstancedMesh) o.dispose();
-      o.material.dispose();
-      if (o.userData.ownedGeometry) o.geometry.dispose();
-    }
-  });
 }
 export async function bakeTreeHLOD(
   renderer,
@@ -330,8 +426,11 @@ for (let i = 0; i < grassCard.attributes.position.count; i++) {
   p.setZ(i, y * y * 0.32);
 }
 grassCard.computeVertexNormals();
+const grassMaterialCache = new WeakMap();
 function grassMaterial(assets) {
-  return decorate(
+  const template = grassMaterialCache.get(assets);
+  if (template) return fadeMaterial(template.clone());
+  const material = decorate(
     new T.MeshStandardMaterial({
       map: assets.grassAtlas.map,
       normalMap: assets.grassAtlas.normal,
@@ -344,6 +443,8 @@ function grassMaterial(assets) {
     }),
     { wind: 0.085, grass: true, grassAtlas: GRASS_TYPES.length },
   );
+  grassMaterialCache.set(assets, material);
+  return fadeMaterial(material.clone());
 }
 function grassMesh(assets, batch) {
   const geometry = grassCard.clone();
@@ -351,7 +452,7 @@ function grassMesh(assets, batch) {
     "plantType",
     new T.InstancedBufferAttribute(batch.types, 1),
   );
-  const mesh = new T.InstancedMesh(
+  const mesh = new AttributeInstances(
     geometry,
     grassMaterial(assets),
     batch.matrices.length / 16,
@@ -404,6 +505,18 @@ export const grassStreamingStats = grassQueue.stats;
 export const finishGrassJobs = () => grassQueue.finish();
 export function buildGrass(assets) {
   const patches = [];
+  const spare = [[], [], []];
+  const recycle = (group, level) => {
+    if (!group) return;
+    group.removeFromParent();
+    group.visible = false;
+    if (
+      group.userData.poolIdentity === grass.identity &&
+      spare[level].length < 48
+    )
+      spare[level].push(group);
+    else removeLevel(group);
+  };
   for (let z = -TERRAIN_SIZE / 2 + 12; z < TERRAIN_SIZE / 2 - 12; z += 24)
     for (let x = -TERRAIN_SIZE / 2 + 12; x < TERRAIN_SIZE / 2 - 12; x += 24) {
       const p = {
@@ -430,38 +543,64 @@ export function buildGrass(assets) {
           Number.isFinite(p.requestPriority[level]);
         if (!wanted()) return;
         if (level === 2 && grass.templates.length === GRASS_MIXES.length) {
-          const group = new T.Group(),
-            batches = await buildGrassBatches(x, z, p.seed, 2, grass.identity);
+          const batches = await buildGrassBatches(
+            x,
+            z,
+            p.seed,
+            2,
+            grass.identity,
+          );
           if (!wanted()) return;
+          const group = spare[2].pop() || new T.Group();
+          group.userData.poolIdentity = grass.identity;
           for (let k = 0; k < GRASS_MIXES.length; k++) {
             const batch = batches[k],
               count = batch.matrices.length / 16;
-            if (!count) continue;
             const atlas = grass.templates[k];
-            const mesh = new T.InstancedMesh(
-              new T.PlaneGeometry(atlas.record.width, atlas.record.height),
-              atlasMaterial(atlas, 0.26),
-              count,
-            );
+            let mesh = group.children.find((m) => m.userData.mix === k);
+            if (mesh && mesh.instanceMatrix.count < count) {
+              group.remove(mesh);
+              removeLevel(mesh);
+              mesh = null;
+            }
+            if (!count && !mesh) continue;
+            if (!mesh) {
+              const capacity = Math.max(
+                16,
+                2 ** Math.ceil(Math.log2(count || 1)),
+              );
+              mesh = new AttributeInstances(
+                new T.PlaneGeometry(atlas.record.width, atlas.record.height),
+                atlasMaterial(atlas, 0.26),
+                capacity,
+              );
+              mesh.instanceColor = new T.InstancedBufferAttribute(
+                new Float32Array(capacity * 3),
+                3,
+              );
+              mesh.userData.mix = k;
+              group.add(mesh);
+              group.userData.pipelineReady = false;
+            }
+            mesh.instanceCount = count;
             mesh.instanceMatrix.array.set(batch.matrices);
             mesh.instanceMatrix.needsUpdate = true;
-            mesh.instanceColor = new T.InstancedBufferAttribute(
-              batch.colours,
-              3,
-            );
+            mesh.instanceColor.array.set(batch.colours);
+            mesh.instanceColor.needsUpdate = true;
             mesh.boundingSphere = new T.Sphere(
               p.center.clone().add(new T.Vector3(0, 0.6, 0)),
               32,
             );
             mesh.userData.ownedGeometry = true;
             mesh.userData.grassCard = true;
-            group.add(mesh);
           }
           await grass.prepare?.(group, () =>
-            wanted() ? p.requestPriority[level] : Infinity,
+            wanted()
+              ? prioritizeArea(p.center, p.requestPriority[level])
+              : Infinity,
           );
           if (!wanted()) {
-            removeLevel(group);
+            recycle(group, level);
             return;
           }
           p.levels[2] = group;
@@ -476,21 +615,51 @@ export function buildGrass(assets) {
           grass.identity,
         );
         if (!wanted()) return;
-        const group = new T.Group();
+        const group = spare[level].pop() || new T.Group();
+        group.userData.poolIdentity = grass.identity;
         const batch = batches[0];
+        let mesh = group.children[0];
+        if (mesh && mesh.instanceMatrix.count < batch.matrices.length / 16) {
+          group.remove(mesh);
+          removeLevel(mesh);
+          mesh = null;
+        }
         if (batch.matrices.length) {
-          const mesh = grassMesh(assets, batch);
+          if (!mesh) {
+            // Fixed capacity lets subsequent tiles reuse the same instance buffers
+            // and Three node-builder state instead of compiling another graph.
+            const capacity = Math.max(
+              batch.matrices.length / 16,
+              Math.ceil((GRASS_COUNT * 2) / (level === 1 ? 3 : 1)),
+            );
+            mesh = grassMesh(assets, {
+              matrices: new Float32Array(capacity * 16),
+              colours: new Float32Array(capacity * 3),
+              types: new Float32Array(capacity),
+            });
+            group.add(mesh);
+          }
+          mesh.instanceCount = batch.matrices.length / 16;
+          mesh.instanceMatrix.array.set(batch.matrices);
+          mesh.instanceMatrix.needsUpdate = true;
+          mesh.instanceColor.array.set(batch.colours);
+          mesh.instanceColor.needsUpdate = true;
+          mesh.geometry.attributes.plantType.array.set(batch.types);
+          mesh.geometry.attributes.plantType.needsUpdate = true;
           mesh.boundingSphere = new T.Sphere(
             p.center.clone().add(new T.Vector3(0, 1, 0)),
             34,
           );
-          group.add(mesh);
+        } else if (mesh) {
+          mesh.instanceCount = 0;
         }
         await grass.prepare?.(group, () =>
-          wanted() ? p.requestPriority[level] : Infinity,
+          wanted()
+            ? prioritizeArea(p.center, p.requestPriority[level])
+            : Infinity,
         );
         if (!wanted()) {
-          removeLevel(group);
+          recycle(group, level);
           return;
         }
         p.levels[level] = group;
@@ -502,7 +671,7 @@ export function buildGrass(assets) {
         p.requestPriority.fill(Infinity);
         patches.lodRevision = (patches.lodRevision || 0) + 1;
         for (let i = 0; i < 3; i++) {
-          removeLevel(p.levels[i]);
+          recycle(p.levels[i], i);
           p.levels[i] = null;
         }
       };
@@ -516,6 +685,12 @@ export function buildGrass(assets) {
   );
   patches.active = new Set();
   const grass = { patches, assets, templates: [] };
+  grass.clearPool = () => {
+    for (const pool of spare) {
+      for (const group of pool) removeLevel(group);
+      pool.length = 0;
+    }
+  };
   return grass;
 }
 export async function bakeGrassLOD(
@@ -596,6 +771,7 @@ export async function bakeGrassLOD(
     removeLevel(source);
   }
   for (const p of grass.patches) p.release();
+  grass.clearPool();
   grass.identity = identity;
   onProgress("Relightable grass patches cached", 0.96);
   return [];
@@ -737,7 +913,30 @@ export function updateShrubs(items, camera, scene) {
       transition = T.MathUtils.smoothstep(d, 100, 145),
       end = 1 - T.MathUtils.smoothstep(d, 320, 420);
     const groups = [p.group, p.far];
+    p.distance = d;
     const weights = [1 - transition, Math.min(transition, end)];
+    for (let i = 0; i < 2; i++) {
+      const group = groups[i];
+      if (
+        d <= (i === 0 ? 220 : 520) ||
+        !group?.userData.hasPreparedResources ||
+        group.visible ||
+        group.userData.preparation
+      )
+        continue;
+      const replacement = group.clone();
+      replacement.traverse((mesh) => {
+        if (!mesh.isMesh) return;
+        mesh.material = fadeMaterial(mesh.material.clone());
+        if (mesh.userData.ownedGeometry) mesh.geometry = mesh.geometry.clone();
+      });
+      replacement.userData.pipelineReady =
+        replacement.userData.hasPreparedResources = false;
+      replacement.userData.preparation = null;
+      replacement.userData.residencyRequested = false;
+      p[i === 0 ? "group" : "far"] = groups[i] = replacement;
+      removeLevel(group);
+    }
     if (items.prepareGroup) {
       for (let i = 0; i < 2; i++) {
         const group = groups[i];
@@ -745,7 +944,11 @@ export function updateShrubs(items, camera, scene) {
         if (!group.userData.residencyRequested) {
           group.userData.residencyRequested = true;
           items
-            .prepareGroup(group)
+            .prepareGroup(group, () =>
+              p.distance <= (i === 0 ? 220 : 520)
+                ? prioritizeArea(p.center, p.distance)
+                : Infinity,
+            )
             .then(() => {
               items.lodState = null;
             })
