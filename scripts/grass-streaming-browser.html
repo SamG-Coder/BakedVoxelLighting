@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Grass streaming walk benchmark</title>
+    <style>
+      body {
+        margin: 0;
+        background: #18251c;
+      }
+      pre {
+        position: fixed;
+        top: 0;
+        left: 0;
+        z-index: 2;
+        max-height: 90vh;
+        overflow: auto;
+        color: white;
+        background: #111e;
+        font: 12px monospace;
+        padding: 8px;
+      }
+    </style>
+  </head>
+  <body>
+    <pre id="walk-report">Starting grass streaming benchmark</pre>
+    <script type="module" src="./grass-streaming-browser.js"></script>
+  </body>
+</html>

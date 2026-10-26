@@ -1,4 +1,5 @@
 import { getGPUUploads, setUploadsInteractive } from "./gpu-uploads.js";
+import { PreparationQueue } from "./preparation-queue.js";
 // GPU objects belong to this renderer. Serialize their preparation, outside animate().
 // compileAsync still runs JS on the main thread; it yields between shader stages.
 const queues = new WeakMap();
@@ -27,10 +28,13 @@ export function prepareForRender(
   target = null,
   substituteMaterial = null,
   callDepth = 0,
+  priority,
 ) {
   rendererJobStats.pending++;
-  const job = (queues.get(renderer) || Promise.resolve())
-    .then(async () => {
+  let queue = queues.get(renderer);
+  if (!queue) queues.set(renderer, (queue = new PreparationQueue()));
+  const job = queue
+    .run(async () => {
       await afterFrame();
       object.updateMatrixWorld(true);
       const saved = [];
@@ -82,7 +86,7 @@ export function prepareForRender(
         await uploads.finish(batch);
       }
       rendererJobStats.completed++;
-    })
+    }, priority)
     .catch((error) => {
       rendererJobStats.errors.push(error.message);
       throw error;
@@ -90,10 +94,5 @@ export function prepareForRender(
     .finally(() => {
       rendererJobStats.pending--;
     });
-  // One failed job must not poison the queue for later requests.
-  queues.set(
-    renderer,
-    job.catch(() => {}),
-  );
   return job;
 }

@@ -1,4 +1,5 @@
 import { MathUtils } from "three/webgpu";
+import { requestGrassAhead } from "./grass-stream-queue.js";
 const handoffMs = 240;
 const preparing = new WeakSet();
 
@@ -109,14 +110,24 @@ export function updateLOD(
     return previous.counts;
   }
   const counts = [0, 0, 0, 0];
+  const elapsed = previous ? (now - previous.time) / 1000 : 0;
+  let leadX = 0,
+    leadZ = 0;
+  if (items.grid && elapsed > 0 && elapsed < 0.5) {
+    leadX = ((position.x - previous.x) / elapsed) * 2;
+    leadZ = ((position.z - previous.z) / elapsed) * 2;
+    const limit = Math.min(1, 48 / (Math.hypot(leadX, leadZ) || 1));
+    leadX *= limit;
+    leadZ *= limit;
+  }
   let candidates = items;
   if (items.grid) {
     candidates = new Set(items.active);
     items.active = new Set();
     const gx = Math.floor((camera.position.x + 2000) / 24),
       gz = Math.floor((camera.position.z + 2000) / 24);
-    for (let z = gz - 9; z <= gz + 9; z++)
-      for (let x = gx - 9; x <= gx + 9; x++) {
+    for (let z = gz - 11; z <= gz + 11; z++)
+      for (let x = gx - 11; x <= gx + 11; x++) {
         const p = items.grid.get(`${x}:${z}`);
         if (p) candidates.add(p);
       }
@@ -125,9 +136,13 @@ export function updateLOD(
   for (const c of candidates) {
     const d = c.center.distanceTo(camera.position);
     c.priority = d;
-    if (c.kind === "grass" && d > 190) {
+    if (c.kind === "grass" && d > 240) {
       counts[3]++;
-      if (c.current !== 3) {
+      if (
+        c.current !== 3 ||
+        c.pending?.size ||
+        c.levels.slice(0, 3).some(Boolean)
+      ) {
         c.release?.();
         for (const object of c.levels) if (object) object.visible = false;
       }
@@ -168,9 +183,28 @@ export function updateLOD(
         }
       }
     }
-    if (c.kind === "grass" && level < 3) {
-      c.ensure?.(2);
-      for (let i = 0; i < 3; i++) if (weights[i] > 0) c.ensure?.(i);
+    if (c.kind === "grass") {
+      const predicted = Math.hypot(
+        c.center.x - position.x - leadX,
+        c.center.y - position.y,
+        c.center.z - position.z - leadZ,
+      );
+      if (force < 0) requestGrassAhead(c, weights, d, predicted, distances);
+      else {
+        c.requestPriority = weights
+          .slice(0, 3)
+          .map((w) => (w > 0 ? d : Infinity));
+        for (let i = 0; i < 3; i++) if (weights[i] > 0) c.ensure?.(i);
+      }
+      if (d > 190) {
+        for (const object of c.levels)
+          if (object) {
+            object.visible = false;
+            object.removeFromParent();
+          }
+        transitions.delete(c);
+        continue;
+      }
     }
     const resident = c.levels.map(
       (object) =>
@@ -222,6 +256,7 @@ export function updateLOD(
   }
   items.lodState = {
     x: position.x,
+    time: now,
     y: position.y,
     z: position.z,
     force,

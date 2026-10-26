@@ -267,6 +267,16 @@ Missing area data is now prepared off the animation thread:
   update. During exploration, a new preparation item starts after a presented
   frame. Three's async compiler yields between shader stages; this remaining
   renderer-owned work is still on the main thread, not a Web Worker.
+- Grass streaming keeps up to four tile jobs in flight so worker generation and
+  cache reads can overlap an earlier tile's GPU preparation. All meshes in one
+  grass tile prepare together. Visible grass receives priority over background
+  renderer work, with every eighth selection servicing the oldest queued job.
+  LODs preload one 24 m tile beyond their fade boundary, plus up to 48 m of
+  movement prediction. Resident tiles are retained within 240 m; stale requests
+  are cancelled. IndexedDB persistence is submitted before transferring worker
+  buffers, without waiting for disk commit before displaying the tile. Upload
+  page and frame budgets remain unchanged. `worldDiagnostics.grassStreaming`
+  exposes active/queued counts, cancellations, wait/build maxima and errors.
 - Stable minimal sun-shadow materials retain the same alpha masks, fade, wind
   positions and shadow sides without reconstructing a shared override shader
   on first encounter. The colour and shadow paths are prepared before publishing
@@ -285,6 +295,49 @@ Missing area data is now prepared off the animation thread:
   volume is prepared, preventing partially published lighting during streaming.
 
 Local checks (not GitHub Actions):
+
+Voxel occupancy uses a worker-built XZ index of trunks. Each GPU voxel checks
+only the trunks overlapping its column; dense woodland no longer truncates at
+1,100 trunks. Grass cache reads in the voxel worker overlap in bounded groups
+of eight. Voxel preparation has priority over background forest work, and bake
+reports include separate worker/occupancy/transport/lighting stage durations plus
+preparation, readback and cache timings. These are elapsed durations, including
+queue waits, not isolated GPU timestamps.
+
+Far-tree merge preparation can overlap eight jobs during loading and three while
+travelling. GPU ownership and paged upload limits remain serialized. Far bounds
+come from the baked quad dimensions instead of traversing full-detail tree
+meshes; ready replacements still inherit the outgoing LOD's fade before removal.
+
+`npm run test:voxel-index` compares indexed/exhaustive trunk occupancy, checks
+dense cells beyond the previous cap, and checks merged bounds. For actual shader
+pixel equivalence, open `/scripts/voxel-index-browser.html?backend=webgpu` or
+`backend=webgl2` with the dev server running. The report must show no errors,
+nonzero output, and zero byte differences. Render/readback timings are noisy and
+should not be treated as isolated GPU performance measurements.
+
+The 2026-10-26 local 180 m walking check (6 m/s for 30 s, then 15 s stationary)
+had zero missing nearby L0 grass tiles at every one-second sample on both
+backends. WebGPU had no queued grass at the stop; WebGL2 cleared remaining
+outer/preload requests three seconds later. WebGPU fresh volume rebuilds measured
+1.17 s initially and 1.51–1.83 s while travelling, with 0.31–0.37 s in streamed
+voxel-detail preparation. This excludes whole-world startup; asset and driver
+caches were already warm. WebGL2 reused occupancy/transport records from the
+WebGPU run, so its bake times are not a cold-backend comparison. Both shader
+comparison runs produced identical indexed/exhaustive output. Frame intervals
+still included outliers of 450 ms (WebGPU) and 433 ms (WebGL2); this is not a
+hitch-free claim. Reports/screenshots are under `evidence/grass-walk-priority-*`
+and `evidence/voxel-index-*` locally.
+
+`npm run test:grass-streaming` checks bounded overlapping tile jobs, renderer
+priority/fairness, stale request cancellation, recovery after errors, LOD
+preloading and release of prefetched tiles. `npm run test:lod-handoff` checks
+resident coverage during asynchronous LOD replacement.
+With the dev server running, open `/scripts/grass-streaming-browser.html?backend=webgpu`
+for a 30-second, 180 m straight walk followed by 15 seconds at rest. The displayed
+report samples missing L0 tiles inside 38 m, pending jobs, preparation latency,
+frame intervals and errors. Use `backend=webgl2` to compare APIs or `speed=22`
+for a 660 m sprint. This is a local profiling harness, not a GitHub Actions test.
 
 `node scripts/verify-preparation-workers.mjs` checks byte-identical worker voxel
 colour/opacity and material masks, transferred ownership, merged cache reuse,

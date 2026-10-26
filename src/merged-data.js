@@ -39,3 +39,27 @@ export function bakeMergedCluster(trees, prototypes) {
   });
   return record;
 }
+
+// Bounds from the exact baked quad dimensions; no traversal of full-detail meshes.
+export function mergedClusterBounds(trees, prototypes) {
+  const min = [Infinity, Infinity, Infinity],
+    max = [-Infinity, -Infinity, -Infinity];
+  for (const t of trees) {
+    const p = prototypes[t.variant],
+      c = Math.cos(t.rotation),
+      s = Math.sin(t.rotation);
+    const [x, y, z] = p.center;
+    const center = [
+      t.x + (x * c + z * s) * t.scale,
+      t.y + y * t.scale,
+      t.z + (-x * s + z * c) * t.scale,
+    ];
+    // Spherical allowance also contains quads viewed with camera pitch.
+    const radius = Math.hypot(p.width, p.height) * t.scale * 0.5;
+    for (let axis = 0; axis < 3; axis++) {
+      min[axis] = Math.min(min[axis], center[axis] - radius);
+      max[axis] = Math.max(max[axis], center[axis] + radius);
+    }
+  }
+  return { min, max };
+}

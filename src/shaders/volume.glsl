@@ -1,4 +1,4 @@
-vec4 volumeBake(vec2 uv, vec3 dims, vec3 origin, vec3 extent, sampler2D terrain, sampler2D trees, sampler3D details, sampler3D field, sampler2D transportMap, int treeCount, float grid, int mode, float directionMode, vec3 sun, vec3 lamp, float power) {
+vec4 volumeBake(vec2 uv, vec3 dims, vec3 origin, vec3 extent, sampler2D terrain, sampler2D trees, sampler3D details, sampler3D field, sampler2D transportMap, float grid, int mode, float directionMode, vec3 sun, vec3 lamp, float power) {
     vec2 pixel=floor(uv*vec2(dims.x,dims.y*dims.z));
     vec3 cell=vec3(pixel.x,floor(pixel.y/dims.z),mod(pixel.y,dims.z));
     vec3 p=origin+(cell+.5)/dims*extent;
@@ -8,8 +8,10 @@ vec4 volumeBake(vec2 uv, vec3 dims, vec3 origin, vec3 extent, sampler2D terrain,
         vec4 land=mix(mix(texelFetch(terrain,b,0),texelFetch(terrain,min(b+ivec2(1,0),hi),0),f.x),mix(texelFetch(terrain,min(b+ivec2(0,1),hi),0),texelFetch(terrain,min(b+ivec2(1),hi),0),f.x),f.y);
         vec3 color=mix(vec3(.17,.25,.065),vec3(.25,.18,.11),land.g);
         float a=clamp((land.r-(p.y-.5*extent.y/dims.y))/(extent.y/dims.y),0.,1.);
-        for(int i=0;i<treeCount;i++) {
-            vec4 tree=texelFetch(trees,ivec2(i,0),0);vec3 q=p-tree.xyz;
+        vec4 header=texelFetch(trees,ivec2(cell.x,cell.z),0);
+        for(int i=0;i<int(header.y);i++) {
+            int index=int(header.x)+i,width=int(dims.x);
+            vec4 tree=texelFetch(trees,ivec2(index%width,index/width),0);vec3 q=p-tree.xyz;
             if(length(q.xz)<tree.w*.42&&q.y>0.&&q.y<tree.w*8.){a=1.;color=vec3(.24,.17,.09);}
         }
         vec4 extra=textureLod(details,(p-origin)/extent,0.);

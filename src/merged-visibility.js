@@ -1,3 +1,4 @@
+import { mergedClusterBounds } from "./merged-data.js";
 import { WorkerClient } from "./worker-client.js";
 const worker = new WorkerClient(
   new Worker(new URL("./merged-worker.js", import.meta.url), {
@@ -29,9 +30,9 @@ export const mergedStats = {
 let mergedTemplate = null;
 let atlas = null,
   identity = "",
-  busy = false,
   generation = 0;
 const bounds = new WeakMap();
+const pending = new Set();
 
 function makeAtlas(prototypes) {
   const first = prototypes[0].farAtlas.record,
@@ -138,13 +139,22 @@ export function updateMergedVisibility(
     for (const c of clusters) {
       c.unmergedFar = null;
       c.sourceFarDraws = new Set(c.trees.map((t) => t.variant)).size;
+      const box = mergedClusterBounds(
+        c.trees,
+        clusters.prototypes.map((p) => ({
+          center: p.center.toArray(),
+          width: p.farAtlas.record.width,
+          height: p.farAtlas.record.height,
+        })),
+      );
       bounds.set(
         c,
-        new T.Box3()
-          .setFromObject(c.levels[0])
-          .getBoundingSphere(new T.Sphere()),
+        new T.Box3(
+          new T.Vector3(...box.min),
+          new T.Vector3(...box.max),
+        ).getBoundingSphere(new T.Sphere()),
       );
-      bounds.get(c).radius += 16; // Conservative allowance for camera-facing quad corners.
+      bounds.get(c).radius += 16;
     }
   }
   camera.updateMatrixWorld();
@@ -167,7 +177,7 @@ export function updateMergedVisibility(
     if (c.unmergedFar) {
       mergedStats.mergedDraws++;
       if (c.levels[3].parent !== scene) scene.add(c.levels[3]);
-    } else {
+    } else if (!pending.has(c)) {
       const d = c.center.distanceToSquared(camera.position);
       if (d < best) {
         best = d;
@@ -175,9 +185,9 @@ export function updateMergedVisibility(
       }
     }
   }
-  if (busy || !candidate) return;
-  busy = true;
-  mergedStats.pending = 1;
+  if (pending.size >= (prewarm ? 8 : 3) || !candidate) return;
+  pending.add(candidate);
+  mergedStats.pending = pending.size;
   const c = candidate,
     version = generation,
     key = `merged-far-v1:${identity}:${c.id}`;
@@ -196,8 +206,8 @@ export function updateMergedVisibility(
   })()
     .catch((e) => mergedStats.errors.push(e.message))
     .finally(() => {
-      busy = false;
-      mergedStats.pending = 0;
+      pending.delete(c);
+      mergedStats.pending = pending.size;
     });
 }
 export async function clearMergedCache() {

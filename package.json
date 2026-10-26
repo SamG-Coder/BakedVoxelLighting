@@ -11,6 +11,8 @@
     "preview": "vite preview --host 127.0.0.1",
     "test:merged": "node scripts/verify-merged.mjs",
     "test:lod-handoff": "node scripts/verify-lod-handoff.mjs",
+    "test:voxel-index": "node scripts/verify-voxel-index.mjs",
+    "test:grass-streaming": "node scripts/verify-grass-streaming.mjs",
     "test:landscape": "node scripts/landscape-data.mjs",
     "test:frames": "node scripts/verify-frame-clock.mjs && node scripts/verify-frame-browser.mjs",
     "test:terrain-faces": "node scripts/verify-terrain-faces.mjs",

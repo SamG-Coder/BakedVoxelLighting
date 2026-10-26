@@ -38,13 +38,14 @@ import { skyColour } from "./native-kernels.js";
 import { ref } from "./tsl-baking.js";
 import grassWorkerSource from "./grass-worker.js?raw";
 import { buildVoxelDetailsAsync, voxelWorkerStats } from "./voxel-details.js";
-import { finishGrassJobs } from "./vegetation.js";
+import { finishGrassJobs, grassStreamingStats } from "./vegetation.js";
 import atlasWorkerSource from "./atlas-worker.js?raw";
 import { setShaderBackend, nativeVolumeSource } from "./native-kernels.js";
 import nativeSource from "./native-kernels.js?raw";
 import { VoxelSun, installVoxelSun } from "./tsl-sun.js";
 import tslBakeSource from "./tsl-baking.js?raw";
 import tslMaterialSource from "./tsl-materials.js?raw";
+import treeGridSource from "./voxel-tree-grid.js?raw";
 import detailSource from "./voxel-core.js?raw";
 import voxelWorkerSource from "./voxel-worker.js?raw";
 import grassDataSource from "./grass-data.js?raw";
@@ -803,6 +804,7 @@ async function loadAssets() {
       terrainSnapshotSource +
       vegetationSource +
       detailSource +
+      treeGridSource +
       voxelWorkerSource,
   );
   surfaceIdentity = await digest(
@@ -952,6 +954,7 @@ function animate(now) {
   updateMergedVisibility(clusters, camera, scene);
   diagnostics.mergedVisibility = mergedStats;
   diagnostics.grassBake = grassBakeStats;
+  diagnostics.grassStreaming = grassStreamingStats;
   diagnostics.preparation = {
     voxel: voxelWorkerStats,
     merged: mergedWorkerStats,
@@ -1085,16 +1088,15 @@ async function start() {
     if (group.userData.pipelineReady) return Promise.resolve();
     if (group.userData.preparation) return group.userData.preparation;
     group.userData.preparation = (async () => {
-      for (const mesh of group.isMesh ? [group] : group.children)
-        await prepareForRender(
-          renderer,
-          mesh,
-          camera,
-          scene,
-          composer.sceneTarget,
-          null,
-          1,
-        );
+      await prepareForRender(
+        renderer,
+        group,
+        camera,
+        scene,
+        composer.sceneTarget,
+        null,
+        1,
+      );
       await preparedSunShadow.prepare(renderer, group, scene);
       group.userData.pipelineReady = true;
       clusters.lodRevision = (clusters.lodRevision || 0) + 1;
@@ -1105,19 +1107,19 @@ async function start() {
     });
     return group.userData.preparation;
   };
-  grass.prepare = async (group) => {
+  grass.prepare = async (group, priority) => {
     group.updateMatrixWorld(true);
-    for (const mesh of group.children) {
+    if (group.children.length) {
       await prepareForRender(
         renderer,
-        mesh,
+        group,
         camera,
         scene,
         composer.sceneTarget,
         null,
         1,
+        priority,
       );
-      if (loopStarted) await new Promise((resolve) => setTimeout(resolve, 0));
     }
   };
   diagnostics.grassGround = await bakeGrassGround(
@@ -1176,14 +1178,17 @@ async function start() {
   updateLOD(grass.patches, camera, forcedGrass, GRASS_LOD_DISTANCES, scene);
   // Merge the starting distance ring in every direction before presentation.
   // Translation into another ring can still request additional merges.
-  for (let i = 0; i < clusters.length; i++) {
-    const job = updateMergedVisibility(clusters, camera, scene, true);
-    if (!job) break;
-    await job;
-    if (i % 16 === 0) {
-      progress(`Merging visible forest clusters ${i + 1}`, 0.97);
-      await new Promise(requestAnimationFrame);
+  for (let i = 0; i < clusters.length; i += 8) {
+    const jobs = [];
+    for (let j = 0; j < 8; j++) {
+      const job = updateMergedVisibility(clusters, camera, scene, true);
+      if (!job) break;
+      jobs.push(job);
     }
+    if (!jobs.length) break;
+    await Promise.all(jobs);
+    progress(`Merging visible forest clusters ${mergedStats.baked}`, 0.97);
+    await new Promise(requestAnimationFrame);
   }
   updateMergedVisibility(clusters, camera, scene);
   // Warm the active distance rings in every direction. Frustum-limited compilation

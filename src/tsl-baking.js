@@ -86,7 +86,6 @@ export function volumePass(kind, u, grid) {
       field,
       transportMap: texture("transportMap"),
       linearSampler: N.sampler(field),
-      treeCount: N.int(u.treeCount?.value || 0),
       grid: N.float(grid),
       mode: N.int({ occupancy: 0, transport: 1, lighting: 2 }[kind] ?? 2),
       directionMode: u.directionMode ? ref(u, "directionMode") : N.float(0),

@@ -27,8 +27,11 @@ self.onmessage = async ({
       sampleTerrainRegion(terrain, xx, zz),
     );
     const batches = generateGrassBatches({ x, z, seed, level, land });
-    await cache.put(key, batches);
+    // IndexedDB clones synchronously when put() is issued. Submit persistence
+    // before transferring buffers, but don't make visibility wait for disk commit.
+    const stored = cache.put(key, batches);
     self.postMessage({ id, batches, cacheHit: false }, transfer(batches));
+    await stored;
   } catch (error) {
     self.postMessage({ id, error: error.message });
   }

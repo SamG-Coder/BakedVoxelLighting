@@ -10,6 +10,7 @@ import { grassHabitat, grassPopulation, patchNoise } from "./habitat.js";
 export { grassHabitat } from "./habitat.js";
 import { prepareAtlasMips } from "./atlas-mips.js";
 import { buildGrassBatches } from "./grass-jobs.js";
+import { GrassStreamQueue } from "./grass-stream-queue.js";
 import * as T from "three/webgpu";
 import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
 import { random, height } from "./world-data.js";
@@ -346,39 +347,9 @@ export function grassPoints(
   return groups;
 }
 const yieldWork = () => new Promise((resolve) => setTimeout(resolve, 0));
-const grassRequests = [];
-let grassBusy = false;
-const grassWaiters = [];
-async function pumpGrassJobs() {
-  if (grassBusy) return;
-  grassBusy = true;
-  try {
-    while (grassRequests.length) {
-      grassRequests.sort(
-        (a, b) =>
-          a.p.priority +
-          (a.level === 2 ? 0 : 10) -
-          (b.p.priority + (b.level === 2 ? 0 : 10)),
-      );
-      const { p, level, generation } = grassRequests.shift();
-      try {
-        if (generation === p.generation) {
-          await yieldWork();
-          await p.build(level, generation);
-        }
-      } finally {
-        if (p.pending.get(level) === generation) p.pending.delete(level);
-      }
-    }
-  } finally {
-    grassBusy = false;
-    grassWaiters.splice(0).forEach((resolve) => resolve());
-  }
-}
-export async function finishGrassJobs() {
-  if (grassBusy || grassRequests.length)
-    await new Promise((resolve) => grassWaiters.push(resolve));
-}
+const grassQueue = new GrassStreamQueue();
+export const grassStreamingStats = grassQueue.stats;
+export const finishGrassJobs = () => grassQueue.finish();
 export function buildGrass(assets) {
   const patches = [];
   for (let z = -TERRAIN_SIZE / 2 + 12; z < TERRAIN_SIZE / 2 - 12; z += 24)
@@ -393,20 +364,23 @@ export function buildGrass(assets) {
         kind: "grass",
       };
       p.pending = new Map();
+      p.requestPriority = [Infinity, Infinity, Infinity];
       p.generation = 0;
       p.ensure = (level) => {
         if (p.levels[level] || level === 3 || p.pending.has(level)) return;
         const generation = p.generation;
         p.pending.set(level, generation);
-        grassRequests.push({ p, level, generation });
-        pumpGrassJobs().catch(console.error);
+        grassQueue.enqueue(p, level, generation);
       };
       p.build = async (level, generation) => {
-        if (generation !== p.generation) return;
+        const wanted = () =>
+          generation === p.generation &&
+          Number.isFinite(p.requestPriority[level]);
+        if (!wanted()) return;
         if (level === 2 && grass.templates.length === 3) {
           const group = new T.Group(),
             batches = await buildGrassBatches(x, z, p.seed, 2, grass.identity);
-          if (generation !== p.generation) return;
+          if (!wanted()) return;
           for (let k = 0; k < 3; k++) {
             const batch = batches[k],
               count = batch.matrices.length / 16;
@@ -431,8 +405,10 @@ export function buildGrass(assets) {
             mesh.userData.grassCard = true;
             group.add(mesh);
           }
-          await grass.prepare?.(group);
-          if (generation !== p.generation) {
+          await grass.prepare?.(group, () =>
+            wanted() ? p.requestPriority[level] : Infinity,
+          );
+          if (!wanted()) {
             removeLevel(group);
             return;
           }
@@ -447,7 +423,7 @@ export function buildGrass(assets) {
           level,
           grass.identity,
         );
-        if (generation !== p.generation) return;
+        if (!wanted()) return;
         const group = new T.Group();
         const batch = batches[0];
         if (batch.matrices.length) {
@@ -458,8 +434,10 @@ export function buildGrass(assets) {
           );
           group.add(mesh);
         }
-        await grass.prepare?.(group);
-        if (generation !== p.generation) {
+        await grass.prepare?.(group, () =>
+          wanted() ? p.requestPriority[level] : Infinity,
+        );
+        if (!wanted()) {
           removeLevel(group);
           return;
         }
@@ -469,6 +447,7 @@ export function buildGrass(assets) {
       p.release = () => {
         p.generation++;
         p.pending.clear();
+        p.requestPriority.fill(Infinity);
         patches.lodRevision = (patches.lodRevision || 0) + 1;
         for (let i = 0; i < 3; i++) {
           removeLevel(p.levels[i]);

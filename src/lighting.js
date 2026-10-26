@@ -117,6 +117,21 @@ export async function bakeVolume(
   onProgress,
 ) {
   const start = performance.now();
+  const stages = {},
+    operations = {};
+  const timed = async (name, work) => {
+    const t = performance.now();
+    try {
+      return await work();
+    } finally {
+      operations[name] = performance.now() - t;
+    }
+  };
+  let stageStart = start;
+  const mark = (name) => {
+    stages[name] = performance.now() - stageStart;
+    stageStart = performance.now();
+  };
   const origin = volumeMin.clone();
   const geometryKey =
     "occupancy:" +
@@ -159,49 +174,60 @@ export async function bakeVolume(
       origin,
       volumeSize,
     );
+    mark("voxelDetailsMs");
+    onProgress("Baking indexed terrain & woodland occupancy", 0.12);
     const detailTexture = data3D(detailRecord.data, n);
-    const treeData = new Float32Array(1100 * 4);
-    const localTrees = world.areaIndexes.trees.query(
-      origin.x,
-      origin.z,
-      origin.x + volumeSize.x,
-      origin.z + volumeSize.z,
-    );
-    localTrees
-      .slice(0, 1100)
-      .forEach((t, i) => treeData.set([t.x, t.y, t.z, t.scale], i * 4));
+    const grid = detailRecord.treeGrid;
     const trees = new T.DataTexture(
-      treeData,
-      1100,
-      1,
+      grid.data,
+      grid.width,
+      grid.height,
       T.RGBAFormat,
       T.FloatType,
     );
+    lightingState.treeLookup = {
+      trees: grid.trees,
+      records: grid.records,
+      meanCandidates: grid.meanCandidates,
+    };
     trees.needsUpdate = true;
     quad.material = volumePass(
       "occupancy",
       {
         ...uniforms,
         trees: { value: trees },
-        treeCount: { value: Math.min(localTrees.length, 1100) },
         details: { value: detailTexture },
       },
       TERRAIN_GRID,
     );
-    await prepareForRender(renderer, scene, camera, scene, target);
+    await timed("occupancyPrepareMs", () =>
+      prepareForRender(
+        renderer,
+        scene,
+        camera,
+        scene,
+        target,
+        null,
+        0,
+        () => 180,
+      ),
+    );
     try {
       renderer.setRenderTarget(target);
       renderer.render(scene, camera);
       renderer.setRenderTarget(old);
       const packed = new Uint8Array(((n * n * n) / 2) * 4);
-      await readPixels(renderer, target, 0, 0, n, (n * n) / 2, packed);
+      await timed("occupancyReadbackMs", () =>
+        readPixels(renderer, target, 0, 0, n, (n * n) / 2, packed),
+      );
       geometry = {
         data: await reorderVoxels(packed, n),
         n,
         kinds: detailRecord.kinds,
         contributors: detailRecord.counts,
+        treeLookup: lightingState.treeLookup,
       };
-      await cache.put(geometryKey, geometry);
+      await timed("occupancyCacheMs", () => cache.put(geometryKey, geometry));
     } finally {
       renderer.setRenderTarget(old);
       quad.material.dispose();
@@ -209,7 +235,9 @@ export async function bakeVolume(
       detailTexture.dispose();
     }
   }
+  mark("occupancyMs");
   lightingState.contributors = geometry.contributors;
+  lightingState.treeLookup = geometry.treeLookup || null;
   const field = data3D(geometry.data, n);
   const transportKey =
     "transport:" +
@@ -219,6 +247,7 @@ export async function bakeVolume(
   let transport = await cache.get(transportKey);
   lightingState.transportCacheHit = !!transport;
   if (!transport) {
+    onProgress("Baking sky visibility & woodland bounce", 0.18);
     const buffers = [];
     quad.material = volumePass(
       "transport",
@@ -229,7 +258,18 @@ export async function bakeVolume(
       },
       TERRAIN_GRID,
     );
-    await prepareForRender(renderer, scene, camera, scene, target);
+    await timed("transportPrepareMs", () =>
+      prepareForRender(
+        renderer,
+        scene,
+        camera,
+        scene,
+        target,
+        null,
+        0,
+        () => 180,
+      ),
+    );
     try {
       for (let mode = 0; mode < 2; mode++) {
         quad.material.uniforms.directionMode.value = mode;
@@ -247,6 +287,7 @@ export async function bakeVolume(
     transport = { data: buffers[0], directions: buffers[1], n };
     await cache.put(transportKey, transport);
   }
+  mark("transportMs");
   const transportMap = new T.DataTexture(
     transport.data,
     n,
@@ -278,7 +319,18 @@ export async function bakeVolume(
     },
     TERRAIN_GRID,
   );
-  await prepareForRender(renderer, scene, camera, scene, target);
+  await timed("lightingPrepareMs", () =>
+    prepareForRender(
+      renderer,
+      scene,
+      camera,
+      scene,
+      target,
+      null,
+      0,
+      () => 180,
+    ),
+  );
   // This binding is consumed by the world, not by the lighting bake pass.
   // Make it resident before publishing the matching volume origin/dimensions.
   await uploadTextures(renderer, [directionMap]);
@@ -349,6 +401,8 @@ export async function bakeVolume(
   return {
     key,
     ms: performance.now() - start,
+    stages: { ...stages, lightingMs: performance.now() - stageStart },
+    operations,
     bytes: record.data.byteLength,
     cached,
   };
