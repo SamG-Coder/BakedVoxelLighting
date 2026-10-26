@@ -21,6 +21,7 @@ function prepare(world) {
           leaves: p.leaves,
           paths: p.paths.map((path) => ({
             radii: path.radii,
+            colour: path.colour,
             points: path.points.map((v) => v.toArray()),
           })),
         })),

@@ -19,6 +19,7 @@ import habitatSource from "./habitat.js?raw";
 import plantGrowthSource from "./plant-growth.js?raw";
 import plantAtlasSource from "./plant-atlas.js?raw";
 import { grassBakeStats, clearGrassBakes } from "./grass-jobs.js";
+import { clearTreeBakes } from "./growth-jobs.js";
 import { prepareAtlasMips } from "./atlas-mips.js";
 import { advanceHour, solarState } from "./day-cycle.js";
 import { indexVoxelWorld } from "./voxel-index.js";
@@ -70,6 +71,8 @@ import vegetationSource from "./vegetation.js?raw";
 import lightingSource from "./lighting.js?raw";
 import worldSource from "./world-data.js?raw";
 import growthSource from "./growth.js?raw";
+import appearanceSource from "./plant-appearance.js?raw";
+import woodUnionSource from "./wood-union.js?raw";
 import terrainSource from "./terrain-field.js?raw";
 import impostorSource from "./impostors.js?raw";
 import { BakeCache, digest } from "./cache.js";
@@ -521,6 +524,7 @@ $("lodColors").onchange = (e) => {
 $("clear").onclick = async () => {
   await finishGrassJobs();
   await clearGrassBakes();
+  await clearTreeBakes();
   await cache.clear();
   await clearMergedCache();
   cacheLabel();
@@ -791,7 +795,9 @@ async function loadAssets() {
     };
   }
   assetHash = await digest(
-    catalogSource +
+    woodUnionSource +
+      appearanceSource +
+      catalogSource +
       habitatSource +
       plantGrowthSource +
       plantAtlasSource +
@@ -812,7 +818,9 @@ async function loadAssets() {
       voxelWorkerSource,
   );
   surfaceIdentity = await digest(
-    "layered-surfaces-v5:" +
+    woodUnionSource +
+      appearanceSource +
+      "layered-surfaces-v5:" +
       catalogSource +
       habitatSource +
       plantGrowthSource +
@@ -1090,7 +1098,7 @@ async function start() {
   deadwood = buildDeadwood(world, assets);
   diagnostics.deadwood = deadwood.stats;
   window.worldTest.deadwood = deadwood;
-  clusters = buildTrees(world, assets);
+  clusters = await buildTrees(world, assets, surfaceIdentity, progress);
   grass = buildGrass(assets);
   clusters.prepareGroup = (group) => {
     if (group.userData.pipelineReady) return Promise.resolve();

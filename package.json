@@ -14,6 +14,7 @@
     "test:voxel-index": "node scripts/verify-voxel-index.mjs",
     "test:grass-streaming": "node scripts/verify-grass-streaming.mjs",
     "test:habitats": "node scripts/verify-habitats.mjs",
+    "test:tree-surfaces": "node scripts/verify-tree-surfaces.mjs",
     "test:landscape": "node scripts/landscape-data.mjs",
     "test:frames": "node scripts/verify-frame-clock.mjs && node scripts/verify-frame-browser.mjs",
     "test:terrain-faces": "node scripts/verify-terrain-faces.mjs",

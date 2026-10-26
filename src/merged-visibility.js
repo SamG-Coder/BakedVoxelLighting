@@ -84,6 +84,7 @@ function material() {
       alphaToCoverage: true,
       side: T.DoubleSide,
       roughness: 1,
+      vertexColors: true,
     }),
     { transmission: 0.32 },
   );
@@ -99,6 +100,7 @@ async function install(c, record, clusters, version) {
     ["plantInfo", 2],
     ["uv", 2],
     ["normal", 3],
+    ["color", 3],
   ])
     g.setAttribute(name, new T.BufferAttribute(record[name], size));
   g.setIndex(new T.BufferAttribute(record.indices, 1));

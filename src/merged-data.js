@@ -1,3 +1,4 @@
+import { treeTint } from "./plant-appearance.js";
 export function bakeMergedCluster(trees, prototypes) {
   const count = trees.length;
   const record = {
@@ -6,6 +7,7 @@ export function bakeMergedCluster(trees, prototypes) {
     plantInfo: new Float32Array(count * 8),
     uv: new Float32Array(count * 8),
     normal: new Float32Array(count * 12),
+    color: new Float32Array(count * 12),
     indices: new Uint32Array(count * 6),
   };
   trees.forEach((t, i) => {
@@ -33,6 +35,7 @@ export function bakeMergedCluster(trees, prototypes) {
       record.plantInfo.set([t.rotation, t.variant], vertex * 2);
       record.uv.set([u, v], vertex * 2);
       record.normal.set([0, 0, 1], vertex * 3);
+      record.color.set(treeTint(t.seed), vertex * 3);
     }
     const k = i * 4;
     record.indices.set([k, k + 1, k + 2, k, k + 2, k + 3], i * 6);

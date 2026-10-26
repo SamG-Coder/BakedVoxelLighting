@@ -229,6 +229,7 @@ export function instanced(geometry, material, transforms) {
     dummy.updateMatrix();
     mesh.setMatrixAt(i, dummy.matrix);
     if (t.c) mesh.setColorAt(i, new T.Color(t.c));
+    if (t.colour) mesh.setColorAt(i, new T.Color().setRGB(...t.colour));
   });
   mesh.computeBoundingSphere();
   return mesh;

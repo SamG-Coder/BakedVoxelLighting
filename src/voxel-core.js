@@ -1,6 +1,7 @@
 import { GRASS_TYPES, TREE_TYPES } from "./plant-catalog.js";
 import { Vector3 } from "three/src/math/Vector3.js";
 import { riverCenter, riverLevel } from "./terrain-math.js";
+import { treeTint } from "./plant-appearance.js";
 function* voxelDetailChunks(world, n, min, size, grassRecords) {
   const ny = n / 2,
     cell = [size.x / n, size.y / ny, size.z / n],
@@ -149,6 +150,7 @@ function* voxelDetailChunks(world, n, min, size, grassRecords) {
     yield;
     const prototype = world.treePrototypes?.[t.variant],
       profile = world.materialProfiles[TREE_TYPES[prototype.species]];
+    const tint = treeTint(t.seed);
     for (const leaf of prototype.leaves) {
       const p = new Vector3(...leaf.p)
         .multiplyScalar(t.scale)
@@ -158,7 +160,7 @@ function* voxelDetailChunks(world, n, min, size, grassRecords) {
       stamp(
         p.toArray(),
         [r, r * 0.65, r],
-        profile.colour,
+        profile.colour.map((v, i) => v * tint[i] * (leaf.colour?.[i] ?? 1)),
         profile.coverage * 0.3,
         32,
       );
@@ -189,7 +191,9 @@ function* voxelDetailChunks(world, n, min, size, grassRecords) {
               .lerp(b, k / steps)
               .toArray(),
             [r, r, r],
-            [0.24, 0.17, 0.09],
+            [0.24, 0.17, 0.09].map(
+              (v, i) => v * tint[i] * (path.colour?.[i] ?? 1),
+            ),
             1,
             8,
           );

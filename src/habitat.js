@@ -77,6 +77,11 @@ export function grassHabitat(x, z, land) {
   const short = smooth(0.6, 0.83, patchNoise(x * 0.043, z * 0.043, 719));
   const vigour = 0.76 + broad * 0.28;
   const tint = 0.82 + fine * 0.14;
+  // Broad 100–250 m colour communities remain legible beyond geometry distance.
+  const region = patchNoise(x * 0.005 + 17, z * 0.007 - 8, 1009);
+  const gold =
+    smooth(0.32, 0.76, region) * (1 - moisture * 0.65) * (1 - woodland * 0.65);
+  const lush = moisture * (1 - gold) * (0.4 + region * 0.6);
   return {
     weights,
     mixes,
@@ -88,9 +93,9 @@ export function grassHabitat(x, z, land) {
     height: (0.78 + broad * 0.63) * (1 - short * 0.34) * (1 - woodland * 0.46),
     tint,
     colour: [
-      tint * (0.81 + dry * 0.48 + short * 0.11),
-      tint * (1.03 - dry * 0.1) * vigour,
-      tint * (0.67 - dry * 0.22 + moisture * 0.16),
+      tint * (0.7 + dry * 0.48 + short * 0.11 + gold * 0.38 - lush * 0.1),
+      tint * (0.96 - dry * 0.1 + gold * 0.06 + lush * 0.07) * vigour,
+      tint * (0.6 - dry * 0.22 + moisture * 0.16 - gold * 0.18),
     ],
     flow:
       0.8 +

@@ -23,6 +23,8 @@ import { random, height } from "./world-data.js";
 import { TERRAIN_SIZE, terrainSample } from "./terrain-field.js";
 import { decorate, lightUniforms } from "./lighting.js";
 import { growPlant } from "./growth.js";
+import { growTreeAsync } from "./growth-jobs.js";
+import { treeTint } from "./plant-appearance.js";
 import {
   captureSurface,
   instanced,
@@ -87,6 +89,7 @@ function plantMaterials(assets, species, shrub = false) {
       normalMap: bark.normal,
       normalScale: new T.Vector2(0.6, 0.6),
       roughness: 1,
+      vertexColors: true,
       color: shrub
         ? 0xb4aa93
         : species === 1
@@ -122,14 +125,18 @@ function makeModel(plant, assets, low = false) {
   group.add(wood, leaf);
   return group;
 }
-export function buildTrees(world, assets) {
+export async function buildTrees(world, assets, identity, progress = () => {}) {
   const prototypes = [];
   for (let i = 0; i < TREE_VARIANTS; i++) {
-    const p = growPlant(
+    progress(
+      `Baking connected tree surfaces ${i + 1}/${TREE_VARIANTS}`,
+      0.06 + (0.1 * i) / TREE_VARIANTS,
+    );
+    const p = await growTreeAsync(
       9801 + i * 137,
       i % TREE_TYPES.length,
-      false,
       Math.floor(i / TREE_TYPES.length),
+      identity,
     );
     p.foliage = mergedLeaves(p.leaves);
     p.model = makeModel(p, assets);
@@ -150,6 +157,7 @@ export function buildTrees(world, assets) {
             p: [t.x, t.y, t.z],
             r: [0, t.rotation, 0],
             s: [t.scale, t.scale, t.scale],
+            colour: treeTint(t.seed),
           }));
         if (!transforms.length) continue;
         const p = prototypes[i],
@@ -245,6 +253,7 @@ export async function bakeTreeHLOD(
         p: [t.x, t.y, t.z],
         r: [0, t.rotation, 0],
         s: [t.scale, t.scale, t.scale],
+        colour: treeTint(t.seed),
       }));
       const billboards = trees.map((t) => ({
         p: p.center
@@ -255,6 +264,7 @@ export async function bakeTreeHLOD(
           .toArray(),
         r: [0, t.rotation, 0],
         s: [t.scale, t.scale, t.scale],
+        colour: treeTint(t.seed),
       }));
       const wood = instanced(
         p.farWood,

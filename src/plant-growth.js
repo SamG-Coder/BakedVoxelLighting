@@ -1,6 +1,7 @@
 import * as T from "three/webgpu";
 import { seededRandom } from "./habitat.js";
 import { TREE_TYPES, SHRUB_TYPES } from "./plant-catalog.js";
+import { leafColour } from "./plant-appearance.js";
 const up = new T.Vector3(0, 1, 0);
 const profiles = [
   {
@@ -81,10 +82,29 @@ export function growStructure(seed, species = 0, shrub = false, age = 1) {
   function sample(path, t) {
     const u = Math.min(0.99999, Math.max(0, t)) * (path.points.length - 1),
       i = Math.floor(u);
+    const direction = path.points[i + 1]
+      .clone()
+      .sub(path.points[i])
+      .normalize();
+    let distance = 0;
+    for (let j = 1; j <= i; j++)
+      distance += path.points[j].distanceTo(path.points[j - 1]);
+    distance += path.points[i + 1].distanceTo(path.points[i]) * (u - i);
+    let right = new T.Vector3(1, 0, 0).addScaledVector(direction, -direction.x);
+    if (right.lengthSq() < 0.001)
+      right = new T.Vector3(0, 0, 1).addScaledVector(direction, -direction.z);
+    right.normalize();
     return {
       p: path.points[i].clone().lerp(path.points[i + 1], u - i),
       d: path.points[i + 1].clone().sub(path.points[i]).normalize(),
       r: T.MathUtils.lerp(path.radii[i], path.radii[i + 1], u - i),
+      bark: {
+        right,
+        forward: new T.Vector3().crossVectors(direction, right).normalize(),
+        circumference: Math.max(0.18, (path.radii[0] * Math.PI * 2) / 0.85),
+        u: path.points[0].x * 0.19,
+        v: distance * 0.28 + path.points[0].y * 0.17 + path.points[0].z * 0.13,
+      },
     };
   }
   function spray(attachment, direction, size, spread = 1) {
@@ -98,21 +118,27 @@ export function growStructure(seed, species = 0, shrub = false, age = 1) {
     const normal = p.clone().sub(crownCenter);
     normal.y = normal.y * 0.35 + 0.85;
     normal.normalize();
-    const value = 0.85 + rng() * 0.15;
+    const value = 0.94 + rng() * 0.06;
+    const colour = leafColour(p.x, p.y, p.z, seed).map((v) => v * value);
     leaves.push({
       p: p.toArray(),
       r: [e.x, e.y, e.z],
       s: [size * spread, size, size],
       n: normal.toArray(),
       attachment: attachment.toArray(),
-      c: new T.Color(
-        value,
-        value * (0.98 + rng() * 0.04),
-        value * (0.91 + rng() * 0.06),
-      ).getHex(),
+      c: new T.Color(...colour).getHex(),
+      colour,
     });
   }
-  function limb(start, direction, len, radius, depth, shape = profile) {
+  function limb(
+    start,
+    direction,
+    len,
+    radius,
+    depth,
+    shape = profile,
+    parent = null,
+  ) {
     const d = direction.clone().normalize(),
       points = [start.clone().addScaledVector(d, -radius * 0.45)];
     let p = start.clone();
@@ -126,6 +152,13 @@ export function growStructure(seed, species = 0, shrub = false, age = 1) {
       points.push(p);
     }
     const path = addPath(points, radius, Math.max(0.0018, radius * 0.07));
+    if (parent)
+      path.attachment = {
+        p: start.clone(),
+        d: parent.d.clone(),
+        r: parent.r,
+        bark: parent.bark,
+      };
     if (depth > 0) {
       // Lateral forks start along the parent, not at a single terminal junction.
       for (let k = 0; k < (depth === 2 ? 3 : 2); k++) {
@@ -148,6 +181,7 @@ export function growStructure(seed, species = 0, shrub = false, age = 1) {
           Math.min(s.r * 0.7, radius * 0.48),
           depth - 1,
           shape,
+          s,
         );
       }
       const tip = sample(path, 0.87);
@@ -220,7 +254,7 @@ export function growStructure(seed, species = 0, shrub = false, age = 1) {
             Math.sin(b),
           ).normalize();
         joints.push(s.p.clone());
-        limb(s.p, d, 0.38 + rng() * 0.42, s.r * 0.55, 0, shape);
+        limb(s.p, d, 0.38 + rng() * 0.42, s.r * 0.55, 0, shape, s);
       }
     }
   } else {
@@ -243,20 +277,12 @@ export function growStructure(seed, species = 0, shrub = false, age = 1) {
       profile.radius * ageScale * (0.9 + rng() * 0.2),
       0.012,
     );
-    // A flared root base is rooted below ground and follows the same trunk origin.
-    for (let k = 0; k < 6; k++) {
-      const a = k * 1.047 + rng() * 0.25,
-        b = sample(stem, 0.045).p;
-      addPath(
-        [
-          b,
-          new T.Vector3(Math.cos(a) * 0.7, 0.07, Math.sin(a) * 0.7),
-          new T.Vector3(Math.cos(a) * 1.4, -0.22, Math.sin(a) * 1.4),
-        ],
-        profile.radius * 0.52,
-        0.006,
-      );
-    }
+    // The trunk mesh itself forms the root buttresses, avoiding intersecting spikes.
+    stem.rootFlare = {
+      radius: stem.radii[0],
+      reach: ageScale * (1.15 + rng() * 0.35),
+      phase,
+    };
     for (let k = 0; k < profile.limbs; k++) {
       const pine = species === 3;
       const fraction = pine
@@ -287,11 +313,12 @@ export function growStructure(seed, species = 0, shrub = false, age = 1) {
         Math.min(s.r * 0.58, profile.radius * 0.52),
         pine ? 1 : 2,
         profile,
+        s,
       );
     }
     // Fine terminal shoots finish the leader without a large isolated leaf ball.
     const tip = sample(stem, 0.9);
-    limb(tip.p, tip.d, height * 0.13, tip.r * 0.8, 1, profile);
+    limb(tip.p, tip.d, height * 0.13, tip.r * 0.8, 1, profile, tip);
   }
   return {
     paths,
@@ -301,6 +328,7 @@ export function growStructure(seed, species = 0, shrub = false, age = 1) {
     species,
     shrub,
     age,
+    seed,
     speciesName: shrub ? SHRUB_TYPES[species % 3] : TREE_TYPES[species % 4],
   };
 }
