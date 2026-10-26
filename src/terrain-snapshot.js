@@ -1,6 +1,16 @@
 import { landscape } from "./terrain-math.js";
 
-export function copyTerrainRegion(pixels, roots, grid, extent, x0, z0, x1, z1) {
+export function copyTerrainRegion(
+  pixels,
+  roots,
+  grid,
+  extent,
+  x0,
+  z0,
+  x1,
+  z1,
+  canopy = null,
+) {
   const step = extent / (grid - 1);
   const start = (v) =>
     Math.max(0, Math.min(grid - 2, Math.floor((v + extent / 2) / step)));
@@ -20,6 +30,7 @@ export function copyTerrainRegion(pixels, roots, grid, extent, x0, z0, x1, z1) {
     height,
     pixels: new Float32Array(width * height * 4),
     roots: new Float32Array(width * height),
+    canopy: new Float32Array(width * height),
   };
   for (let row = 0; row < height; row++) {
     const offset = (gz + row) * grid + gx;
@@ -28,6 +39,8 @@ export function copyTerrainRegion(pixels, roots, grid, extent, x0, z0, x1, z1) {
       row * width * 4,
     );
     result.roots.set(roots.subarray(offset, offset + width), row * width);
+    if (canopy)
+      result.canopy.set(canopy.subarray(offset, offset + width), row * width);
   }
   return result;
 }
@@ -62,6 +75,7 @@ export function sampleTerrainRegion(s, x, z) {
     moisture: channel(s.pixels, 4, 2),
     slope: channel(s.pixels, 4, 3),
     root: channel(s.roots, 1, 0),
+    canopy: s.canopy ? channel(s.canopy, 1, 0) : undefined,
     ...landscape(x, z),
   };
 }

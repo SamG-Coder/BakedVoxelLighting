@@ -50,8 +50,15 @@ export function growStructure(seed, species = 0, shrub = false, age = 1) {
     leaves = [],
     joints = [],
     segments = [];
-  const profile = profiles[species % 4],
-    ageScale = [0.78, 1, 1.12][age % 3];
+  const form = age % 3;
+  const profile = { ...profiles[species % 4] };
+  if (!shrub) {
+    // Saplings, competition-grown canopy trees, and broad veteran/open-grown trees.
+    profile.spread *= [0.65, 0.86, 1.18][form];
+    profile.crown = form === 1 ? Math.max(0.42, profile.crown) : profile.crown;
+    profile.limbs = Math.round(profile.limbs * [0.7, 1, 1.1][form]);
+  }
+  const ageScale = [0.52, 1.06, 1.2][form];
   const height = profile.height * ageScale * (0.92 + rng() * 0.16);
   const crownCenter = new T.Vector3(0, shrub ? 1.2 : height * 0.64, 0);
   function addPath(points, radius, endRadius = 0.002) {

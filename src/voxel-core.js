@@ -11,6 +11,7 @@ function* voxelDetailChunks(world, n, min, size, grassRecords) {
       shrubs: 0,
       rocks: 0,
       branches: 0,
+      deadwood: 0,
       leaves: 0,
       water: 0,
     };
@@ -110,6 +111,23 @@ function* voxelDetailChunks(world, n, min, size, grassRecords) {
   }
   for (const object of query(world.areaIndexes.objects)) {
     yield;
+    if (object.wood) {
+      const { a, b, r } = object;
+      const steps = Math.max(
+        1,
+        Math.ceil(Math.hypot(...a.map((v, i) => b[i] - v)) / Math.min(...cell)),
+      );
+      for (let i = 0; i <= steps; i++)
+        stamp(
+          a.map((v, k) => v + ((b[k] - v) * i) / steps),
+          [r, r, r],
+          [0.22, 0.15, 0.085],
+          1,
+          8,
+        );
+      counts.deadwood++;
+      continue;
+    }
     const { p, r, rock } = object;
     stamp(
       p,

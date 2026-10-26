@@ -23,7 +23,13 @@ Open http://127.0.0.1:5173. Drag to orbit; scroll to travel. Explore world enabl
 
 ## World and vegetation
 
-The deterministic 4,000 x 4,000 m world (16 km²) uses a 2001-square terrain grid, 42,000 erosion droplets, sediment deposition, thermal relaxation, and slope-aware routes. Moisture, slope and foot traffic drive meadow, dry grass, rock and soil blending. It contains 38,041 trees in 1,024 spatial batches, twelve tree prototypes across oak/birch/ash/pine, distinct hazel/bramble/elder shrubs, clustered rocks, and 27,556 grass patch locations. Nearby grass geometry is generated lazily and released beyond the active region.
+The deterministic 4,000 x 4,000 m world (16 km²) uses a 2001-square terrain grid, 42,000 erosion droplets, sediment deposition, thermal relaxation, and slope-aware routes. Moisture, slope and foot traffic drive meadow, dry grass, rock and soil blending. It contains 56,287 trees in 1,024 spatial batches, twelve tree prototypes across oak/birch/ash/pine, distinct hazel/bramble/elder shrubs, clustered rocks, and 27,556 grass patch locations. Nearby grass geometry is generated lazily and released beyond the active region.
+
+Woodland stands share a static habitat field with meadow patches and regeneration gaps. Tree species and age determine a composited canopy field: closed canopy suppresses tall meadow grass and blends in baked leaf litter and low plants; gaps and edges support flowers and taller vegetation. Moisture and continuous world-coordinate patch noise produce green-to-straw colour gradients and growth direction across grass tile boundaries. The same four habitat mixtures drive near plants, patch impostors, and mipmapped terrain captures. These are ecological art rules, not a calibrated ecosystem simulation.
+
+Young, crowded, and mature trees have different crown proportions. Hazel, bramble, and elder placement responds to canopy edges, moisture, and clearings while retaining their distinct branch structures. Fallen trunks replace selected mature tree placements, with stumps and attached branch stubs; 1,126 logs pass terrain, road, and river placement checks in the current seed. Their geometry is instanced per spatial cluster, with reduced distant geometry and prepared LOD handoffs. Indexed source segments contribute to voxel occlusion regardless of render visibility. Leaf litter is baked into the ground surface rather than submitted as individual leaves each frame.
+
+Run `npm run test:habitats` for local checks of patch continuity, canopy suppression, worker sampling, colour gradients, and deadwood placement/voxelization. These checks are not added to Actions.
 
 Trees use continuous tapered branch tubes with child forks embedded into parent wood. Roots flare into the ground. A shared irregular root field scales with tree size, raises the soil by up to 12 cm, blends exposed soil into surrounding grass and suppresses grass placements, including grass impostors. Ground and grass use the same field so a soil patch is not covered by the old grass distribution. This is an artistic root-zone approximation, not a biological root simulation.
 
@@ -31,7 +37,7 @@ Trees use continuous tapered branch tubes with child forks embedded into parent 
 |---|---|---|
 | L0 | Below 85 m: detailed branch tubes and foliage cards | Below 38 m: seven grass/flower types in one atlas batch |
 | L1 | 85-190 m: fewer branch ring sides, same branch skeleton and foliage positions | 38-82 m: reduced density of the same source population |
-| L2 | 190-420 m: simplified actual branches plus 16-view canopy captures from the high-detail source | 82-155 m: three shared 8-view patch captures |
+| L2 | 190-420 m: simplified actual branches plus 16-view canopy captures from the high-detail source | 82-155 m: four shared 8-view patch captures |
 | L3 | Beyond 420 m: 8-view full-tree captures, each anchored at its original terrain position | Beyond 155 m: baked grass canopy colour and normals blended into terrain |
 
 Distances use spatial batch centres. Complementary screen-door fades overlap adjacent levels over 14/26/45 m for trees and 8/13/22 m for grass. Far trees are batched spatially but retain their individual transforms: rotating a whole cluster billboard would incorrectly shift their ground contacts on slopes. Atlas minification uses mip filtering. Rendering uses 4-sample multisampling where supported. There is no fog.

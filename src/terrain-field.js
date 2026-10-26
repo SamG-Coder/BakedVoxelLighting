@@ -26,6 +26,7 @@ function rng(seed) {
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
 }
+export const canopyInfluence = new Float32Array(N * N);
 export const rootInfluence = new Float32Array(N * N);
 const heights = new Float32Array(N * N),
   original = new Float32Array(N * N),
@@ -308,6 +309,7 @@ export function terrainSample(x, z) {
     moisture: sampleGrid(moisture, gx, gz),
     slope: sampleGrid(slopes, gx, gz),
     root: sampleGrid(rootInfluence, gx, gz),
+    canopy: sampleGrid(canopyInfluence, gx, gz),
     ...landscape(x, z),
   };
 }
@@ -340,10 +342,14 @@ float terrain(vec2 p){return terrainData(p).r;}`;
 
 export function applyTreeInfluence(trees) {
   for (const tree of trees) {
-    const radius = 3.6 * tree.scale,
+    const crownRadius =
+        [5.8, 4.3, 5.3, 4.6][tree.variant % 4] *
+        tree.scale *
+        [0.6, 1, 1.24][Math.floor(tree.variant / 4)],
+      radius = 3.6 * tree.scale,
       gx = (tree.x + TERRAIN_SIZE / 2) / CELL,
       gz = (tree.z + TERRAIN_SIZE / 2) / CELL,
-      steps = Math.ceil((radius * 2) / CELL);
+      steps = Math.ceil(Math.max(radius * 2, crownRadius) / CELL);
     for (
       let z = Math.max(0, Math.floor(gz) - steps);
       z <= Math.min(N - 1, Math.ceil(gz) + steps);
@@ -360,7 +366,15 @@ export function applyTreeInfluence(trees) {
           r = Math.hypot(dx, dz),
           irregular = 1 + 0.17 * Math.sin(a * 5 + tree.seed);
         const value = Math.exp(-Math.pow(r / (radius * irregular), 2) * 1.8);
-        rootInfluence[z * N + x] = Math.max(rootInfluence[z * N + x], value);
+        const index = z * N + x;
+        rootInfluence[index] = Math.max(rootInfluence[index], value);
+        if (r < crownRadius) {
+          const shade =
+            [0.86, 0.65, 0.74, 0.86][tree.variant % 4] *
+            Math.pow(1 - (r / crownRadius) ** 2, 0.55);
+          canopyInfluence[index] =
+            1 - (1 - canopyInfluence[index]) * (1 - shade);
+        }
       }
   }
   for (let i = 0; i < heights.length; i++) {
@@ -380,5 +394,6 @@ export function snapshotTerrain(x0, z0, x1, z1) {
     z0,
     x1,
     z1,
+    canopyInfluence,
   );
 }

@@ -5,8 +5,8 @@ import {
   terrainSamplingGLSL,
 } from "./terrain-field.js";
 import { TREE_TYPES } from "./plant-catalog.js";
-import { patchNoise } from "./habitat.js";
-export const WORLD_VERSION = "woodland-16km-layered-species-15";
+import { patchNoise, woodlandHabitat } from "./habitat.js";
+export const WORLD_VERSION = "woodland-16km-communities-16";
 export function random(seed) {
   return () => {
     seed |= 0;
@@ -21,25 +21,26 @@ export const terrainGLSL = terrainSamplingGLSL;
 export function makeWorld() {
   const rng = random(851),
     clusters = [],
-    trees = [];
+    trees = [],
+    deadwood = [];
   const occupied = new Map();
   for (let cz = 0; cz < 32; cz++)
     for (let cx = 0; cx < 32; cx++) {
       const x = (cx - 15.5) * (TERRAIN_SIZE / 32),
         z = (cz - 15.5) * (TERRAIN_SIZE / 32),
         items = [];
-      for (let j = 0; j < 160; j++) {
-        const tx = x + (rng() - 0.5) * (TERRAIN_SIZE / 32 - 4),
-          tz = z + (rng() - 0.5) * (TERRAIN_SIZE / 32 - 4),
+      for (let j = 0; j < 384; j++) {
+        const tx = x + (rng() - 0.5) * (TERRAIN_SIZE / 32),
+          tz = z + (rng() - 0.5) * (TERRAIN_SIZE / 32),
           s = terrainSample(tx, tz);
         if (s.traffic > 0.13 || s.slope > 0.65 || s.riverDistance < 13)
           continue;
         // Coherent forest cores and edges, with sparse individual trees on open hills.
+        const wood = woodlandHabitat(tx, tz, s);
         const suitability =
-          Math.max(s.forest, s.wetness * 0.7) *
-          (1 - Math.min(0.65, s.slope)) *
-          (1 - Math.max(0, s.upland - 0.57) * 2.5);
-        if (rng() > 0.018 + 1.7 * Math.pow(suitability, 1.6) * s.clump)
+          wood.core * (0.35 + s.clump * 0.65) * (1 - Math.min(0.7, s.slope));
+        // Mature stands, regeneration gaps and genuinely open hills share one field.
+        if (rng() > 0.005 + 0.92 * suitability ** 1.45 + s.wetness * 0.1)
           continue;
         const gx = Math.floor(tx / 4),
           gz = Math.floor(tz / 4);
@@ -66,15 +67,37 @@ export function makeWorld() {
                   : grove < 0.27
                     ? 2
                     : 0;
+        const age =
+          wood.core > 0.62
+            ? rng() < 0.14
+              ? 0
+              : rng() < 0.8
+                ? 1
+                : 2
+            : rng() < 0.34
+              ? 0
+              : rng() < 0.48
+                ? 1
+                : 2;
         const t = {
           x: tx,
           z: tz,
           y: s.height,
-          scale: 0.78 + rng() * 0.48,
+          scale: 0.72 + rng() * 0.65,
           rotation: rng() * Math.PI * 2,
-          variant: Math.floor(rng() * 3) * TREE_TYPES.length + species,
+          variant: age * TREE_TYPES.length + species,
           seed: Math.floor(rng() * 1e6),
         };
+        if (age > 0 && wood.stand > 0.5 && s.slope < 0.25 && rng() < 0.026) {
+          deadwood.push({
+            ...t,
+            cluster: cz * 32 + cx,
+            decay: rng(),
+            length: 5 + rng() * 6,
+            radius: 0.18 + rng() * 0.22,
+          });
+          continue; // Mortality leaves a real opening; the log replaces this tree.
+        }
         const key = `${gx},${gz}`;
         if (!occupied.has(key)) occupied.set(key, []);
         occupied.get(key).push(t);
@@ -83,5 +106,5 @@ export function makeWorld() {
       }
       clusters.push({ id: cz * 32 + cx, x, z, trees: items });
     }
-  return { clusters, trees, seed: 851 };
+  return { clusters, trees, deadwood, seed: 851 };
 }

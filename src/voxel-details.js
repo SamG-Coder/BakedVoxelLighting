@@ -56,7 +56,7 @@ export async function buildVoxelDetailsAsync(world, n, min, size) {
       grass,
       terrain,
     },
-    [terrain.pixels.buffer, terrain.roots.buffer],
+    [terrain.pixels.buffer, terrain.roots.buffer, terrain.canopy.buffer],
   );
 }
 export function reorderVoxels(packed, n) {

@@ -1,3 +1,5 @@
+import { buildDeadwood } from "./deadwood.js";
+import deadwoodSource from "./deadwood-data.js?raw";
 import { PreparedSunShadow } from "./prepared-shadows.js";
 import { getGPUUploads } from "./gpu-uploads.js";
 import {
@@ -374,6 +376,7 @@ applyTreeInfluence(world.trees);
 let clusters = [],
   grass = null,
   shrubs = [],
+  deadwood = [],
   assetHash = "",
   surfaceIdentity = "",
   baking = true,
@@ -803,6 +806,7 @@ async function loadAssets() {
       terrainMathSource +
       terrainSnapshotSource +
       vegetationSource +
+      deadwoodSource +
       detailSource +
       treeGridSource +
       voxelWorkerSource,
@@ -950,6 +954,7 @@ function animate(now) {
     scene,
   );
   updateShrubs(shrubs, camera, scene);
+  updateShrubs(deadwood, camera, scene);
   updateTerrain(camera);
   updateMergedVisibility(clusters, camera, scene);
   diagnostics.mergedVisibility = mergedStats;
@@ -1082,6 +1087,9 @@ async function start() {
     rocks: diagnostics.environment.rocks,
     river: riverStats,
   };
+  deadwood = buildDeadwood(world, assets);
+  diagnostics.deadwood = deadwood.stats;
+  window.worldTest.deadwood = deadwood;
   clusters = buildTrees(world, assets);
   grass = buildGrass(assets);
   clusters.prepareGroup = (group) => {
@@ -1159,7 +1167,7 @@ async function start() {
   });
   diagnostics.areaIndexes = indexVoxelWorld(world);
   world.bakeIdentity = await digest(
-    assetHash + surfaceIdentity + JSON.stringify(world.trees),
+    assetHash + surfaceIdentity + JSON.stringify([world.trees, world.deadwood]),
   );
   await bake();
   if (!diagnostics.ready) return;
@@ -1173,6 +1181,7 @@ async function start() {
   clusters.prepareGroup = prepareGroup;
   updateLOD(grass.patches, camera, forcedGrass, GRASS_LOD_DISTANCES, scene);
   updateShrubs(shrubs, camera, scene);
+  updateShrubs(deadwood, camera, scene);
   updateTerrain(camera);
   await finishGrassJobs();
   updateLOD(grass.patches, camera, forcedGrass, GRASS_LOD_DISTANCES, scene);
@@ -1221,6 +1230,7 @@ async function start() {
   });
   setTerrainPreparation(clusters.prepareGroup);
   shrubs.prepareGroup = clusters.prepareGroup;
+  deadwood.prepareGroup = clusters.prepareGroup;
   clusters.forEach((c) =>
     c.levels.forEach((g) => {
       if (g?.visible) g.userData.pipelineReady = true;

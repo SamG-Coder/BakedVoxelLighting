@@ -1,4 +1,4 @@
-import { GRASS_TYPES } from "./plant-catalog.js";
+import { GRASS_TYPES, GRASS_MIXES } from "./plant-catalog.js";
 export const smooth = (a, b, x) => {
   const t = Math.max(0, Math.min(1, (x - a) / (b - a)));
   return t * t * (3 - 2 * t);
@@ -28,38 +28,75 @@ export function seededRandom(seed) {
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
 }
+// Static habitat potential, shared by stand placement and all preparation workers.
+// Gaps belong to the landscape, so crossing a render tile never changes a patch.
+export function woodlandHabitat(x, z, land) {
+  const stand = smooth(0.28, 0.74, land.forest ?? 0);
+  const gap = smooth(
+    0.64,
+    0.82,
+    patchNoise(x * 0.016 + 71, z * 0.016 - 19, 823),
+  );
+  const core = stand * (1 - gap);
+  return { stand, gap, core, edge: 4 * core * (1 - core) };
+}
+export function grassColour(habitat) {
+  return (
+    habitat.colour || [
+      habitat.tint,
+      habitat.tint * (1.01 - habitat.dry * 0.025),
+      habitat.tint * (0.96 - habitat.dry * 0.05),
+    ]
+  );
+}
 export function grassHabitat(x, z, land) {
-  const broad = patchNoise(x * 0.019, z * 0.019, 73),
-    fine = patchNoise(x * 0.083, z * 0.083, 127);
-  const moisture = land.moisture ?? 0.5,
-    shade = Math.min(0.85, (land.forest ?? 0) * 0.7 + (land.root ?? 0) * 0.25);
-  const dry = (1 - moisture) * (0.45 + broad * 0.55);
-  const yellow =
-    smooth(0.48, 0.78, patchNoise(x * 0.037, z * 0.037, 439)) * (1 - shade);
-  const purple =
-    smooth(0.51, 0.8, patchNoise(x * 0.029 + 30, z * 0.029, 719)) *
-    (0.4 + moisture * 0.6) *
-    (1 - shade * 0.7);
-  const weights = [
-    0.26 + shade * 0.28,
-    0.3 + moisture * 0.25,
-    0.05 + dry * 0.32,
-    0.025 + dry * 0.14,
-    0.06 + shade * 0.25 + moisture * 0.08,
-    yellow * 0.28,
-    purple * 0.23,
+  const wood = woodlandHabitat(x, z, land);
+  // Elongated, warped patches are modulated by water and canopy, rather than
+  // random per-tile colour. Static growth direction is separate from wind time.
+  const warp = (patchNoise(x * 0.009, z * 0.009, 503) - 0.5) * 28;
+  const broad = patchNoise((x + warp) * 0.027, (z - warp * 0.6) * 0.011, 73);
+  const fine = patchNoise(x * 0.19, z * 0.19, 127);
+  const colony = patchNoise(x * 0.061 + warp * 0.02, z * 0.061, 439);
+  const moisture = Math.max(0, Math.min(1, land.moisture ?? 0.5));
+  const shade = Math.min(0.98, land.canopy ?? wood.core * 0.72);
+  const woodland = smooth(0.18, 0.78, shade) * (0.65 + wood.stand * 0.35);
+  const dry = smooth(0.34, 0.8, 1 - moisture) * (0.45 + broad * 0.55);
+  const flower = smooth(0.46, 0.76, colony) * (1 - woodland) * (1 - dry * 0.65);
+  const dryMix = smooth(0.18, 0.58, dry) * (1 - flower) * (1 - woodland);
+  const mixes = [
+    (1 - woodland) * (1 - flower) - dryMix,
+    dryMix,
+    flower * (1 - woodland),
+    woodland,
   ];
-  const total = weights.reduce((a, b) => a + b, 0);
-  for (let i = 0; i < weights.length; i++) weights[i] /= total;
+  const sum = mixes.reduce((a, b) => a + b, 0);
+  for (let i = 0; i < mixes.length; i++) mixes[i] /= sum;
+  const weights = GRASS_TYPES.map((_, type) =>
+    GRASS_MIXES.reduce((total, mix, i) => total + mix[type] * mixes[i], 0),
+  );
+  const short = smooth(0.6, 0.83, patchNoise(x * 0.043, z * 0.043, 719));
+  const vigour = 0.76 + broad * 0.28;
+  const tint = 0.82 + fine * 0.14;
   return {
     weights,
-    density: 0.85 + fine * 0.14,
-    height: (0.83 + broad * 0.42) * (1 - shade * 0.2),
-    tint: 0.91 + fine * 0.1,
+    mixes,
+    woodland,
     dry,
     shade,
-    flow: patchNoise(x * 0.012, z * 0.012, 89) * Math.PI * 2,
-    patch: yellow + purple > 0.35 ? 2 : dry > 0.42 ? 1 : 0,
+    density:
+      Math.min(1, 0.52 + fine * 0.35 + moisture * 0.16) * (1 - woodland * 0.91),
+    height: (0.78 + broad * 0.63) * (1 - short * 0.34) * (1 - woodland * 0.46),
+    tint,
+    colour: [
+      tint * (0.81 + dry * 0.48 + short * 0.11),
+      tint * (1.03 - dry * 0.1) * vigour,
+      tint * (0.67 - dry * 0.22 + moisture * 0.16),
+    ],
+    flow:
+      0.8 +
+      (patchNoise(x * 0.012, z * 0.012, 89) - 0.5) * 1.4 +
+      (broad - 0.5) * 0.6,
+    patch: mixes.indexOf(Math.max(...mixes)),
   };
 }
 export function chooseGrass(weights, random) {
@@ -102,7 +139,8 @@ export function* grassPopulation(
       (form.height[0] + rng() * (form.height[1] - form.height[0])) *
       habitat.height;
     const sx = form.width[0] + rng() * (form.width[1] - form.width[0]);
-    const tint = habitat.tint * (0.94 + rng() * 0.12);
+    const variation = 0.94 + rng() * 0.12;
+    const colour = grassColour(habitat);
     yield {
       index: i,
       x: xx,
@@ -112,11 +150,7 @@ export function* grassPopulation(
       sy,
       sx,
       angle: habitat.flow + (rng() - 0.5) * 2.5,
-      colour: [
-        tint,
-        tint * (1.01 - habitat.dry * 0.025),
-        tint * (0.96 - habitat.dry * 0.05),
-      ],
+      colour: colour.map((v) => v * variation),
     };
   }
 }

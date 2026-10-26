@@ -6,7 +6,13 @@ import {
   GRASS_PATCH,
   GRASS_MIXES,
 } from "./plant-catalog.js";
-import { grassHabitat, grassPopulation, patchNoise } from "./habitat.js";
+import {
+  grassHabitat,
+  grassPopulation,
+  grassColour,
+  woodlandHabitat,
+  patchNoise,
+} from "./habitat.js";
 export { grassHabitat } from "./habitat.js";
 import { prepareAtlasMips } from "./atlas-mips.js";
 import { buildGrassBatches } from "./grass-jobs.js";
@@ -377,11 +383,11 @@ export function buildGrass(assets) {
           generation === p.generation &&
           Number.isFinite(p.requestPriority[level]);
         if (!wanted()) return;
-        if (level === 2 && grass.templates.length === 3) {
+        if (level === 2 && grass.templates.length === GRASS_MIXES.length) {
           const group = new T.Group(),
             batches = await buildGrassBatches(x, z, p.seed, 2, grass.identity);
           if (!wanted()) return;
-          for (let k = 0; k < 3; k++) {
+          for (let k = 0; k < GRASS_MIXES.length; k++) {
             const batch = batches[k],
               count = batch.matrices.length / 16;
             if (!count) continue;
@@ -480,7 +486,7 @@ export async function bakeGrassLOD(
     t.normal.dispose();
   }
   grass.templates = [];
-  for (let k = 0; k < 3; k++) {
+  for (let k = 0; k < GRASS_MIXES.length; k++) {
     const batch = { matrices: [], colours: [], types: [] },
       source = new T.Group();
     const habitat = {
@@ -570,7 +576,7 @@ export function buildShrubs(world, assets) {
       all = [];
     for (let k = 0; k < 3; k++) {
       const transforms = [];
-      for (let patch = 0; patch < 4; patch++) {
+      for (let patch = 0; patch < 6; patch++) {
         const anchor = c.trees[Math.floor(rng() * c.trees.length)];
         if (!anchor) continue;
         const a = rng() * Math.PI * 2,
@@ -588,7 +594,16 @@ export function buildShrubs(world, assets) {
             s.root > 0.6
           )
             continue;
-          const size = 0.65 + rng() * 0.65;
+          const h = grassHabitat(x, z, s),
+            wood = woodlandHabitat(x, z, s);
+          const suitable =
+            k === 0
+              ? 0.15 + wood.edge * 0.6 + s.canopy * 0.22
+              : k === 1
+                ? 0.08 + wood.edge * 0.75 + wood.gap * wood.stand * 0.4
+                : 0.06 + s.moisture * 0.35 + wood.edge * 0.3;
+          if (rng() > suitable * (1 - h.woodland * 0.65)) continue;
+          const size = (k === 1 ? 0.48 : 0.7) + rng() * (k === 0 ? 0.85 : 0.6);
           transforms.push({
             p: [x, s.height - 0.03, z],
             r: [0, rng() * 6.28, 0],
@@ -723,7 +738,7 @@ async function bakeGrassSurface(renderer, cache, identity, assets) {
     const size = 512,
       span = 4,
       captures = [];
-    for (let k = 0; k < 3; k++) {
+    for (let k = 0; k < GRASS_MIXES.length; k++) {
       const source = new T.Group(),
         batch = { matrices: [], colours: [], types: [] };
       const habitat = {
@@ -749,7 +764,7 @@ async function bakeGrassSurface(renderer, cache, identity, assets) {
         0,
         0,
         6151 + k,
-        112,
+        k === 3 ? 18 : 112,
         span,
         sample,
         habitat,
@@ -775,8 +790,56 @@ async function bakeGrassSurface(renderer, cache, identity, assets) {
       }
       for (const c of Object.keys(batch)) batch[c] = new Float32Array(batch[c]);
       source.add(grassMesh(assets, batch));
-      const baseMap = assets["ground-meadow"].map.clone();
-      baseMap.repeat.set(2.8, 2.8);
+      if (k === 3) {
+        // Bake small, dry leaf sprays into the woodland surface. One instanced
+        // draw, no per-leaf runtime objects, and the same mip chain at distance.
+        const rng = random(17101),
+          leaves = [];
+        for (let leaf = 0; leaf < 260; leaf++) {
+          const scale = 0.18 + rng() * 0.31;
+          const transform = {
+            p: [
+              (rng() - 0.5) * span,
+              -0.025 + rng() * 0.014,
+              (rng() - 0.5) * span,
+            ],
+            r: [-Math.PI / 2, 0, rng() * Math.PI * 2],
+            s: [scale, scale, scale],
+            c: new T.Color(
+              1.05 + rng() * 0.2,
+              0.42 + rng() * 0.18,
+              0.16 + rng() * 0.1,
+            ).getHex(),
+          };
+          for (let oz = -1; oz <= 1; oz++)
+            for (let ox = -1; ox <= 1; ox++) {
+              const x = transform.p[0] + ox * span,
+                z = transform.p[2] + oz * span;
+              if (
+                Math.abs(x) < span / 2 + scale &&
+                Math.abs(z) < span / 2 + scale
+              )
+                leaves.push({ ...transform, p: [x, transform.p[1], z] });
+            }
+        }
+        const litter = instanced(
+          new T.PlaneGeometry(1, 1),
+          new T.MeshStandardMaterial({
+            map: assets.oak.map,
+            alphaTest: 0.35,
+            side: T.DoubleSide,
+            roughness: 1,
+          }),
+          leaves,
+        );
+        litter.userData.ownedGeometry = true;
+        source.add(litter);
+      }
+      const baseMap = assets[k === 3 ? "dirt" : "ground-meadow"].map.clone();
+      // An even number of mirrored repeats joins both capture borders exactly,
+      // including source photographs whose opposite edges do not match.
+      baseMap.wrapS = baseMap.wrapT = T.MirroredRepeatWrapping;
+      baseMap.repeat.set(2, 2);
       const base = new T.Mesh(
         new T.PlaneGeometry(span, span),
         new T.MeshStandardMaterial({ map: baseMap, roughness: 1 }),
@@ -804,11 +867,11 @@ async function bakeGrassSurface(renderer, cache, identity, assets) {
       base.geometry.dispose();
       await yieldWork();
     }
-    const w = size * 3,
+    const w = size * GRASS_MIXES.length,
       h = size,
       data = new Uint8Array(w * h * 4),
       normals = new Uint8Array(data.length);
-    for (let k = 0; k < 3; k++)
+    for (let k = 0; k < GRASS_MIXES.length; k++)
       for (let y = 0; y < h; y++) {
         const start = y * size * 4,
           end = start + size * 4,
@@ -821,10 +884,18 @@ async function bakeGrassSurface(renderer, cache, identity, assets) {
       normals,
       w,
       h,
-      views: 3,
+      views: GRASS_MIXES.length,
       cutoff: 0,
     });
-    record = { data, normals, w, h, views: 3, mips, topDown: true };
+    record = {
+      data,
+      normals,
+      w,
+      h,
+      views: GRASS_MIXES.length,
+      mips,
+      topDown: true,
+    };
     await cache.put(key, record);
   }
   for (const [channel, name] of [
@@ -849,7 +920,7 @@ async function bakeGrassSurface(renderer, cache, identity, assets) {
     key,
     tileMetres: 4,
     resolution: 512,
-    habitats: 3,
+    habitats: GRASS_MIXES.length,
     mips: record.mips.length,
   };
 }
@@ -881,25 +952,12 @@ export async function bakeGrassGround(renderer, cache, identity, assets) {
           for (let k = 0; k < GRASS_TYPES.length; k++)
             mean +=
               assets[GRASS_TYPES[k].name].profile.colour[c] * h.weights[k];
-          const tint =
-            h.tint *
-            (c === 1
-              ? 1.01 - h.dry * 0.025
-              : c === 2
-                ? 0.96 - h.dry * 0.05
-                : 1);
+          const tint = grassColour(h)[c];
           data[i + c] = Math.min(255, Math.round(255 * mean * tint));
         }
         data[i + 3] = Math.round(cover * 255);
-        const flower = Math.min(1, (h.weights[5] + h.weights[6]) * 3.5),
-          dry = T.MathUtils.smoothstep(h.dry, 0.22, 0.62) * (1 - flower);
         habitat.set(
-          [
-            Math.round((1 - flower - dry) * 255),
-            Math.round(dry * 255),
-            Math.round(flower * 255),
-            255,
-          ],
+          h.mixes.map((v) => Math.round(v * 255)),
           i,
         );
       }

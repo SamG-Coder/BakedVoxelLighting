@@ -34,6 +34,7 @@ export function buildGrassBatches(x, z, seed, level, identity) {
     worker.postMessage({ id: key, x, z, seed, level, terrain, identity }, [
       terrain.pixels.buffer,
       terrain.roots.buffer,
+      terrain.canopy.buffer,
     ]);
   });
   resident.set(address, job);

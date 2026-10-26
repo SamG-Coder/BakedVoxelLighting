@@ -1,3 +1,4 @@
+import { GRASS_MIXES } from "./plant-catalog.js";
 import { cloudAt, CLOUD_SHADOW_STRENGTH } from "./clouds.js";
 import * as K from "./native-kernels.js";
 import * as T from "three/webgpu";
@@ -183,9 +184,7 @@ function createDecorated(original, options, U, grid) {
       .sample(guv.mul(0.5))
       .setUpdateMatrix(false).rgb;
     const cover = texRef(U, "grassGround").sample(p.xz.add(2000).div(4000));
-    const habitat = texRef(U, "grassHabitat").sample(
-      p.xz.add(2000).div(4000),
-    ).rgb;
+    const habitat = texRef(U, "grassHabitat").sample(p.xz.add(2000).div(4000));
     const tiled = N.fract(N.vec2(p.x, p.z.negate()).div(4));
     // Half a texel of inset isolates habitats in every generated mip level.
     const patchUV = (k) =>
@@ -193,21 +192,24 @@ function createDecorated(original, options, U, grid) {
         tiled.x
           .mul(1 - 2 / 512)
           .add(1 / 512 + k)
-          .div(3),
+          .div(GRASS_MIXES.length),
         tiled.y.mul(1 - 2 / 512).add(1 / 512),
       );
+    let forestFloor = N.vec3(0);
     let surface = N.vec3(0),
       mean = N.vec3(0),
       normal = N.vec3(0);
-    for (let k = 0; k < 3; k++) {
+    for (let k = 0; k < GRASS_MIXES.length; k++) {
       const weight = habitat.element(k),
         map = texRef(U, "grassSurface");
+      if (k === 3)
+        forestFloor = map.sample(patchUV(k)).setUpdateMatrix(false).rgb;
       surface = surface.add(
         map.sample(patchUV(k)).setUpdateMatrix(false).rgb.mul(weight),
       );
       mean = mean.add(
         map
-          .sample(N.vec2((k + 0.5) / 3, 0.5))
+          .sample(N.vec2((k + 0.5) / GRASS_MIXES.length, 0.5))
           .level(9)
           .rgb.mul(weight),
       );
@@ -237,6 +239,8 @@ function createDecorated(original, options, U, grid) {
       cover,
       surface,
       mean,
+      forestFloor,
+      woodland: habitat.a,
     });
     m.normalNode = N.normalMap(
       N.texture(m.normalMap, guv).setUpdateMatrix(false),

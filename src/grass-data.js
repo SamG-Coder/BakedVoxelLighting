@@ -1,12 +1,13 @@
-import { GRASS_COUNT, GRASS_PATCH } from "./plant-catalog.js";
+import { GRASS_COUNT, GRASS_PATCH, GRASS_MIXES } from "./plant-catalog.js";
 import {
   seededRandom,
   grassPopulation,
   grassHabitat,
   grassAllowed,
+  grassColour,
 } from "./habitat.js";
 export function grassLand(x, z, sample) {
-  const land = new Float32Array(13 * 13 * 8);
+  const land = new Float32Array(13 * 13 * 9);
   for (let j = 0; j < 13; j++)
     for (let i = 0; i < 13; i++) {
       const s = sample(x - 12 + i * 2, z - 12 + j * 2);
@@ -20,8 +21,9 @@ export function grassLand(x, z, sample) {
           s.riverDistance,
           s.forest,
           s.wetness,
+          s.canopy ?? 0,
         ],
-        (j * 13 + i) * 8,
+        (j * 13 + i) * 9,
       );
     }
   return land;
@@ -34,7 +36,7 @@ export function generateGrassBatches({ x, z, seed, level, land }) {
       iz = Math.min(11, Math.floor(gz)),
       u = gx - ix,
       v = gz - iz;
-    const at = (a, b) => land[((iz + b) * 13 + ix + a) * 8 + c];
+    const at = (a, b) => land[((iz + b) * 13 + ix + a) * 9 + c];
     return (
       (at(0, 0) * (1 - u) + at(1, 0) * u) * (1 - v) +
       (at(0, 1) * (1 - u) + at(1, 1) * u) * v
@@ -49,12 +51,16 @@ export function generateGrassBatches({ x, z, seed, level, land }) {
     riverDistance: channel(xx, zz, 5),
     forest: channel(xx, zz, 6),
     wetness: channel(xx, zz, 7),
+    canopy: channel(xx, zz, 8),
   });
-  const groups = Array.from({ length: level === 2 ? 3 : 1 }, () => ({
-    matrices: [],
-    colours: [],
-    types: [],
-  }));
+  const groups = Array.from(
+    { length: level === 2 ? GRASS_MIXES.length : 1 },
+    () => ({
+      matrices: [],
+      colours: [],
+      types: [],
+    }),
+  );
   if (level === 2) {
     const rng = seededRandom(seed);
     for (let i = 0; i < GRASS_PATCH.count; i++) {
@@ -86,8 +92,7 @@ export function generateGrassBatches({ x, z, seed, level, land }) {
         zz,
         1,
       );
-      const tint = h.tint / 0.96;
-      b.colours.push(tint, tint, tint);
+      b.colours.push(...grassColour(h).map((v) => v / 0.96));
     }
   } else {
     for (const p of grassPopulation(x, z, seed, GRASS_COUNT, 24, sample)) {
