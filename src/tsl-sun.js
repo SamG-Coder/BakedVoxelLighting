@@ -4,6 +4,7 @@ import * as N from "three/tsl";
 import { sampleVolume } from "./tsl-materials.js";
 import { ref } from "./tsl-baking.js";
 export class VoxelSun extends DirectionalLight {}
+export class VoxelMoon extends DirectionalLight {}
 export function installVoxelSun(renderer, uniforms) {
   class VoxelSunNode extends DirectionalLightNode {
     static get type() {
@@ -34,5 +35,29 @@ export function installVoxelSun(renderer, uniforms) {
       return direct;
     }
   }
+  class VoxelMoonNode extends DirectionalLightNode {
+    static get type() {
+      return "VoxelMoonNode";
+    }
+    setupDirect(builder) {
+      const direct = super.setupDirect(builder);
+      const sky = sampleVolume(
+        uniforms,
+        "directionAtlas",
+        N.positionWorld,
+        [0.5, 1, 0.5, 1],
+      ).a;
+      const cloud = cloudAt(
+        uniforms,
+        N.positionWorld,
+        ref(uniforms, "liveMoonDirection", "vec3"),
+      );
+      direct.lightColor = direct.lightColor
+        .mul(N.mix(1, sky, ref(uniforms, "bakedEnabled")))
+        .mul(N.float(1).sub(cloud.mul(CLOUD_SHADOW_STRENGTH)));
+      return direct;
+    }
+  }
   renderer.library.addLight(VoxelSunNode, VoxelSun);
+  renderer.library.addLight(VoxelMoonNode, VoxelMoon);
 }

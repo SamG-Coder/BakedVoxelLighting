@@ -57,8 +57,8 @@ export const atlasUV = nativeFunction(
   `fn atlasUV(uv:vec2f,angle:f32,yaw:f32,views:f32,row:f32,rows:f32)->vec2f{let index=floor((angle-yaw)/6.28318530718*views+.5)+views;let frame=index-floor(index/views)*views;return vec2f((uv.x+frame)/views,(uv.y+row)/rows);}`,
 );
 export const foliageRadiance = nativeFunction(
-  `vec3 foliageRadiance(vec3 n,vec3 indirect,vec3 bent,float enabled,vec3 sun,float visibility,vec3 lamp,float power,float thin,float daylight,vec3 sunColour){vec3 result=indirect*enabled*(.7+.3*max(dot(n,normalize(bent)),0.));float back=pow(max(dot(-n,sun),0.),.65);float sunPass=mix(1.,visibility,enabled);float local=power/(12.+dot(lamp,lamp));return result*(.04+.96*daylight)+thin*(sunColour*(.04+.5*back)*sunPass*daylight+vec3(1.,.42,.12)*local*(.25+.75*max(dot(-n,normalize(lamp)),0.)));}`,
-  `fn foliageRadiance(n:vec3f,indirect:vec3f,bent:vec3f,enabled:f32,sun:vec3f,visibility:f32,lamp:vec3f,power:f32,thin:f32,daylight:f32,sunColour:vec3f)->vec3f{let result=indirect*enabled*(.7+.3*max(dot(n,normalize(bent)),0.));let back=pow(max(dot(-n,sun),0.),.65);let sunPass=mix(1.,visibility,enabled);let local=power/(12.+dot(lamp,lamp));return result*(.04+.96*daylight)+thin*(sunColour*(.04+.5*back)*sunPass*daylight+vec3f(1.,.42,.12)*local*(.25+.75*max(dot(-n,normalize(lamp)),0.)));}`,
+  `vec3 foliageRadiance(vec3 n,vec3 indirect,vec3 bent,float enabled,vec3 sun,float visibility,vec3 lamp,float power,float thin,float daylight,vec3 sunColour,vec3 lampColour){vec3 result=indirect*enabled*(.7+.3*max(dot(n,normalize(bent)),0.));float back=pow(max(dot(-n,sun),0.),.65);float sunPass=mix(1.,visibility,enabled);float local=power/(12.+dot(lamp,lamp));return result+thin*(sunColour*(.04+.5*back)*sunPass*daylight+lampColour*local*(.25+.75*max(dot(-n,normalize(lamp)),0.)));}`,
+  `fn foliageRadiance(n:vec3f,indirect:vec3f,bent:vec3f,enabled:f32,sun:vec3f,visibility:f32,lamp:vec3f,power:f32,thin:f32,daylight:f32,sunColour:vec3f,lampColour:vec3f)->vec3f{let result=indirect*enabled*(.7+.3*max(dot(n,normalize(bent)),0.));let back=pow(max(dot(-n,sun),0.),.65);let sunPass=mix(1.,visibility,enabled);let local=power/(12.+dot(lamp,lamp));return result+thin*(sunColour*(.04+.5*back)*sunPass*daylight+lampColour*local*(.25+.75*max(dot(-n,normalize(lamp)),0.)));}`,
 );
 export const groundBlend = nativeFunction(
   `vec3 groundBlend(vec3 p,vec3 camera,vec4 land,vec3 soil,vec3 lush,vec3 dry,vec3 stone,float root,vec4 cover,vec3 surface,vec3 mean,vec3 forestFloor,float woodland){vec3 meadow=mix(dry,lush,smoothstep(.22,.64,land.b));float wear=max(smoothstep(.08,.72,land.g),smoothstep(.08,.65,root)*.92);float rock=smoothstep(.32,.72,land.a);float macroTint=.90+.10*sin(p.x*.038+sin(p.z*.027)*2.);float far=smoothstep(90.,300.,distance(camera,p));vec3 grass=cover.rgb*clamp(surface/max(mean,vec3(.012)),vec3(.35),vec3(2.4));meadow=mix(meadow,grass,mix(cover.a*.45,smoothstep(0.,.52,cover.a),far));return mix(mix(mix(meadow*macroTint,soil,wear),stone,rock*(1.-wear))*(1.-land.b*.12),forestFloor*macroTint,woodland*(1.-smoothstep(.08,.45,land.g)));}`,
@@ -82,7 +82,7 @@ export const skyColour = nativeFunction(
  sky=mix(sky,mix(vec3(.85,.43,.20),sky,smoothstep(0.,.5,ray.y)),dusk*.65);
  sky+=vec3(1.,.76,.42)*(pow(toward,256.)*.26+pow(toward,24.)*.035);
  vec3 cloudLight=mix(cloud.rgb,cloud.rgb*vec3(1.,.74,.52),dusk*.55);
- return mix(vec3(.003,.006,.018),sky*(1.-cloud.a)+cloudLight,daylight);
+ return mix(mix(vec3(.006,.012,.028),vec3(.025,.032,.045),cloud.a),sky*(1.-cloud.a)+cloudLight,daylight);
 }`,
   `fn skyColour(ray:vec3f,sun:vec3f,cloud:vec4f,daylight:f32)->vec3f{
  let altitude=pow(max(ray.y,0.),.42);let toward=max(dot(ray,sun),0.);
@@ -91,13 +91,13 @@ export const skyColour = nativeFunction(
  sky=mix(sky,mix(vec3f(.85,.43,.20),sky,smoothstep(0.,.5,ray.y)),dusk*.65);
  sky+=vec3f(1.,.76,.42)*(pow(toward,256.)*.26+pow(toward,24.)*.035);
  let cloudLight=mix(cloud.rgb,cloud.rgb*vec3f(1.,.74,.52),dusk*.55);
- return mix(vec3f(.003,.006,.018),sky*(1.-cloud.a)+cloudLight,daylight);
+ return mix(mix(vec3f(.006,.012,.028),vec3f(.025,.032,.045),cloud.a),sky*(1.-cloud.a)+cloudLight,daylight);
 }`,
 );
 
 // Moss has its own linear reflectance rather than multiplying green into dark bark.
-// Fine broken colonies are evaluated from UVs; the age/aspect mask is baked per vertex.
+// Irregular age masks are baked per vertex; moisture and stable exposure govern coverage.
 export const mossSurface = nativeFunction(
-  `vec3 mossSurface(vec3 bark,vec2 uv,float coverage){float fine=.5+.25*sin(uv.x*213.+sin(uv.y*173.)*2.)+.25*sin(uv.y*327.+uv.x*157.);float mask=clamp(coverage*(.72+.5*fine),0.,1.);vec3 moss=mix(vec3(.025,.060,.009),vec3(.105,.19,.025),fine);return mix(bark,moss,mask);}`,
-  `fn mossSurface(bark:vec3f,uv:vec2f,coverage:f32)->vec3f{let fine=.5+.25*sin(uv.x*213.+sin(uv.y*173.)*2.)+.25*sin(uv.y*327.+uv.x*157.);let mask=clamp(coverage*(.72+.5*fine),0.,1.);let moss=mix(vec3f(.025,.060,.009),vec3f(.105,.19,.025),fine);return mix(bark,moss,mask);}`,
+  `vec3 mossSurface(vec3 bark,float coverage,vec3 n,vec2 habitat){float exposure=.5*(max(dot(n,vec3(-.55,.70,-.44)),0.)+max(dot(n,vec3(.55,.70,.44)),0.))+.4*max(n.y,0.);float shelter=1.-clamp(exposure*(1.-habitat.y*.88),0.,1.);float climate=smoothstep(.12,.65,habitat.x)*(.08+.92*pow(shelter,3.));float fine=clamp(dot(bark,vec3(.2126,.7152,.0722))*3.,0.,1.);float mask=clamp(coverage*climate,0.,1.);return mix(bark,mix(vec3(.022,.047,.006),vec3(.075,.13,.017),fine),mask);}`,
+  `fn mossSurface(bark:vec3f,coverage:f32,n:vec3f,habitat:vec2f)->vec3f{let exposure=.5*(max(dot(n,vec3f(-.55,.70,-.44)),0.)+max(dot(n,vec3f(.55,.70,.44)),0.))+.4*max(n.y,0.);let shelter=1.-clamp(exposure*(1.-habitat.y*.88),0.,1.);let climate=smoothstep(.12,.65,habitat.x)*(.08+.92*pow(shelter,3.));let fine=clamp(dot(bark,vec3f(.2126,.7152,.0722))*3.,0.,1.);let mask=clamp(coverage*climate,0.,1.);return mix(bark,mix(vec3f(.022,.047,.006),vec3f(.075,.13,.017),fine),mask);}`,
 );

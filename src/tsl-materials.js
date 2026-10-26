@@ -99,6 +99,7 @@ export function decorateTSL(original, options, U, grid) {
   return options.fade === false ? m : fadeTSL(m);
 }
 function createDecorated(original, options, U, grid) {
+  mossEnvironmentUniforms = U;
   const {
     wind = 0,
     ground = false,
@@ -159,8 +160,11 @@ function createDecorated(original, options, U, grid) {
   if (moss) {
     m.colorNode = K.mossSurface({
       bark: N.materialColor,
-      uv: N.uv(),
       coverage: N.attribute("moss", "float"),
+      n: N.normalWorld,
+      habitat: texRef(U, "mossEnvironment").sample(
+        N.positionWorld.xz.add(2000).div(4000),
+      ).rg,
     });
     m.userData.moss = true;
   }
@@ -301,6 +305,7 @@ function createDecorated(original, options, U, grid) {
     ),
     lamp: ref(U, "liveLampPosition", "vec3").sub(N.positionWorld),
     power: ref(U, "liveLampPower"),
+    lampColour: ref(U, "liveLampColour", "vec3"),
     thin: ground ? groundFade.mul(0.26) : N.float(thin),
     daylight: ref(U, "daylight"),
     sunColour: ref(U, "sunColour", "vec3"),
@@ -308,6 +313,7 @@ function createDecorated(original, options, U, grid) {
   m.emissiveNode = N.diffuseColor.rgb.mul(extra);
   return fade ? fadeTSL(m) : m;
 }
+let mossEnvironmentUniforms;
 export function billboardTSL(m, atlas, merged = false) {
   const count = atlas.views,
     rows = atlas.rows || 1;
@@ -385,6 +391,15 @@ export function billboardTSL(m, atlas, merged = false) {
   const source = N.texture(m.normalMap, atlasUV).xyz.mul(2).sub(1);
   const wn = rotate(source.normalize(), N.varying(data.w));
   m.normalNode = N.normalize(N.cameraViewMatrix.mul(N.vec4(wn, 0)).xyz);
+  if (atlas.mossPayload)
+    m.colorNode = K.mossSurface({
+      bark: map.rgb,
+      coverage: N.texture(m.normalMap, atlasUV).a,
+      n: wn,
+      habitat: texRef(mossEnvironmentUniforms, "mossEnvironment").sample(
+        N.positionWorld.xz.add(2000).div(4000),
+      ).rg,
+    });
   // Standard materialColor samples map at its ordinary UV. Explicitly bind both
   // albedo and emissive sampling to the selected atlas frame.
   m.emissiveNode = m.emissiveNode.context({ getUV: () => atlasUV });

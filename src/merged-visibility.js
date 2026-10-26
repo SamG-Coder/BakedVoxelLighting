@@ -72,7 +72,12 @@ function makeAtlas(prototypes) {
     return t;
   });
   textures[0].colorSpace = T.LinearSRGBColorSpace;
-  return { textures, views: first.views, rows: prototypes.length };
+  return {
+    textures,
+    views: first.views,
+    rows: prototypes.length,
+    mossPayload: first.mossPayload,
+  };
 }
 function material() {
   if (mergedTemplate) return fadeMaterial(mergedTemplate.clone());

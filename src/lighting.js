@@ -11,6 +11,7 @@ import {
   TERRAIN_SIZE,
   rootInfluence,
   terrainPixels,
+  terrainSample,
   TERRAIN_GRID,
 } from "./terrain-field.js";
 export { makeNormal } from "./normal-map.js";
@@ -50,12 +51,15 @@ export const lightUniforms = {
   bakedEnabled: { value: 0 },
   time: { value: 0 },
   daylight: { value: 1 },
+  mossEnvironment: { value: fallback.clone() },
   sunColour: { value: new T.Vector3(1, 1, 1) },
   terrainField: { value: terrainTexture },
   rootField: { value: rootTexture },
+  liveMoonDirection: { value: new T.Vector3(0, -1, 0) },
   liveSunDirection: { value: new T.Vector3(-0.6, 0.6, -0.5) },
   liveLampPosition: { value: new T.Vector3() },
   liveLampPower: { value: 0 },
+  liveLampColour: { value: new T.Vector3(1, 0.43, 0.12) },
   groundMap: { value: null },
   grassGround: { value: fallback.clone() },
   grassHabitat: { value: fallback.clone() },
@@ -158,6 +162,7 @@ export async function bakeVolume(
       extent: { value: volumeSize },
       terrainField: { value: terrainTexture },
       rootField: { value: rootTexture },
+      liveMoonDirection: { value: new T.Vector3(0, -1, 0) },
       liveSunDirection: { value: new T.Vector3(-0.6, 0.6, -0.5) },
       liveLampPosition: { value: new T.Vector3() },
       liveLampPower: { value: 0 },
@@ -315,7 +320,9 @@ export async function bakeVolume(
       field: { value: field },
       transportMap: { value: transportMap },
       sun: { value: sun.clone() },
+      daylight: lightUniforms.daylight,
       sunColour: lightUniforms.sunColour,
+      lampColour: lightUniforms.liveLampColour,
       lampPosition: { value: new T.Vector3() },
       lampPower: { value: 0 },
     },
@@ -445,4 +452,26 @@ export function voxelProbe(position) {
     ),
     indirect: Array.from(active.transport.data.slice(a, a + 3), (v) => v / 255),
   };
+}
+
+// Persistent habitat data, independent of the current sun or streamed light volume.
+export function bakeMossEnvironment() {
+  const size = 256,
+    data = new Uint8Array(size * size * 4);
+  for (let z = 0; z < size; z++)
+    for (let x = 0; x < size; x++) {
+      const s = terrainSample(
+        ((x + 0.5) / size) * 4000 - 2000,
+        ((z + 0.5) / size) * 4000 - 2000,
+      );
+      const i = (z * size + x) * 4;
+      data[i] = Math.round(Math.min(1, s.moisture) * 255);
+      data[i + 1] = Math.round(Math.min(1, s.canopy) * 255);
+      data[i + 3] = 255;
+    }
+  const texture = new T.DataTexture(data, size, size);
+  texture.minFilter = texture.magFilter = T.LinearFilter;
+  texture.needsUpdate = true;
+  lightUniforms.mossEnvironment.value.dispose();
+  lightUniforms.mossEnvironment.value = texture;
 }

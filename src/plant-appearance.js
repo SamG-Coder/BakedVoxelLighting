@@ -32,19 +32,20 @@ export function leafColour(x, y, z, seed) {
 }
 
 // Age classes: sapling 0, mature 1, old 2. Older rough bark supports broader
-// colonies. Aspect and patch noise break the mask up; age alone is not ecology.
+// colonies. Patch noise breaks the mask up; age alone is not ecology.
 export function mossCoverage(x, y, z, seed, age = 1) {
   const rng = seededRandom(seed ^ 0x7131);
   rng();
-  const variation = 0.7 + rng() * 0.3,
-    aspect = rng() * Math.PI * 2;
-  const side = 0.5 + 0.5 * Math.cos(Math.atan2(z, x) - aspect);
-  const patch = patchNoise(x * 2.2 + seed * 0.013, z * 2.2 + y * 0.55, 609);
+  const variation = 0.7 + rng() * 0.3;
+  // Irregular colonies in object space, baked with the geometry. Actual habitat
+  // and long-term sun exposure are applied consistently to meshes and HLODs.
+  const warp = patchNoise(x * 0.8 + y * 0.37, z * 0.8 - y * 0.23, seed);
+  const patch = patchNoise(x * 2.2 + warp * 2.7, z * 2.2 + y * 0.55, 609);
   return (
     [0.07, 0.62, 0.95][Math.max(0, Math.min(2, age))] *
     variation *
     (1 - smooth(0.3, 1.2 + age * 1.15, y)) *
-    smooth(0.23, 0.67, patch * 0.6 + side * 0.4)
+    smooth(0.23, 0.67, patch * 0.7 + warp * 0.3)
   );
 }
 

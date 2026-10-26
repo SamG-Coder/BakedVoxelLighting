@@ -1,4 +1,4 @@
-vec4 volumeBake(vec2 uv, vec3 dims, vec3 origin, vec3 extent, sampler2D terrain, sampler2D trees, sampler3D details, sampler3D field, sampler2D transportMap, float grid, int mode, float directionMode, vec3 sun, vec3 sunColour, vec3 lamp, float power) {
+vec4 volumeBake(vec2 uv, vec3 dims, vec3 origin, vec3 extent, sampler2D terrain, sampler2D trees, sampler3D details, sampler3D field, sampler2D transportMap, float grid, int mode, float directionMode, vec3 sun, float daylight, vec3 sunColour, vec3 lampColour, vec3 lamp, float power) {
     vec2 pixel=floor(uv*vec2(dims.x,dims.y*dims.z));
     vec3 cell=vec3(pixel.x,floor(pixel.y/dims.z),mod(pixel.y,dims.z));
     vec3 p=origin+(cell+.5)/dims*extent;
@@ -47,6 +47,6 @@ vec4 volumeBake(vec2 uv, vec3 dims, vec3 origin, vec3 extent, sampler2D terrain,
         visibility[ray]=tr;
     }
     vec4 transport=textureLod(transportMap,uv,0.);
-    vec3 indirect=vec3(.035,.055,.085)*(.15+transport.a*.85)+transport.rgb*sunColour*.8+vec3(1.,.43,.12)*power/(10.+dist*dist)*visibility.y*.14;
+    vec3 indirect=(vec3(.035,.055,.085)*(.15+transport.a*.85)+transport.rgb*sunColour*.8)*(.04+.96*daylight)+lampColour*power/(10.+dist*dist)*visibility.y*.14;
     return vec4(indirect,visibility.x);
 }

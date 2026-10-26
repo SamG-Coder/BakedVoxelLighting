@@ -27,6 +27,7 @@ export async function captureSurface(
     object.traverse((o) => {
       if (o.isMesh) saved.push([o, o.material]);
     });
+    const mossPayload = saved.some(([, material]) => material.userData.moss);
     const camera = new T.OrthographicCamera(
         -width / 2,
         width / 2,
@@ -86,7 +87,7 @@ export async function captureSurface(
                 N.If(alpha.lessThanEqual(original.alphaTest || 0), () =>
                   N.Discard(),
                 );
-                let rgb = original.userData.moss ? original.colorNode : colour;
+                let rgb = colour; // Moss potential is stored independently for habitat-aware relighting.
                 if (
                   original.vertexColors &&
                   mesh.geometry.hasAttribute("color")
@@ -103,7 +104,13 @@ export async function captureSurface(
                 });
                 return N.vec4(
                   worldNormal.mul(0.5).add(0.5),
-                  options.topDown ? 1 : alpha,
+                  mossPayload
+                    ? original.userData.moss
+                      ? N.attribute("moss", "float")
+                      : N.float(0)
+                    : options.topDown
+                      ? 1
+                      : alpha,
                 );
               })();
             }
@@ -140,6 +147,7 @@ export async function captureSurface(
         materials.forEach((m) => m.dispose());
       }
       record = {
+        mossPayload,
         data: output[0],
         normals: output[1],
         w: size * views,

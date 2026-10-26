@@ -106,7 +106,8 @@ self.onmessage = ({ data: { id, record, sources, tileSize } }) => {
             b = 0,
             nx = 0,
             ny = 0,
-            nz = 0;
+            nz = 0,
+            payload = 0;
           for (let dy = 0; dy < 2; dy++)
             for (let dx = 0; dx < 2; dx++) {
               const i =
@@ -116,6 +117,7 @@ self.onmessage = ({ data: { id, record, sources, tileSize } }) => {
                   4,
                 alpha = weights[i / 4];
               a += alpha;
+              payload += previous.normals[i + 3] * alpha;
               r += decode(previous.data[i]) * alpha;
               g += decode(previous.data[i + 1]) * alpha;
               b += decode(previous.data[i + 2]) * alpha;
@@ -132,7 +134,8 @@ self.onmessage = ({ data: { id, record, sources, tileSize } }) => {
             ns[out + 1] = ((ny / length) * 0.5 + 0.5) * 255;
             ns[out + 2] = ((nz / length) * 0.5 + 0.5) * 255;
           }
-          data[out + 3] = ns[out + 3] = a / 4;
+          data[out + 3] = a / 4;
+          ns[out + 3] = record.mossPayload ? (a ? payload / a : 0) : a / 4;
           nextWeights[out / 4] = a / 4;
         }
       // Preserve projected leaf coverage at the runtime alpha cutoff.
@@ -152,7 +155,8 @@ self.onmessage = ({ data: { id, record, sources, tileSize } }) => {
         for (let y = 0; y < height; y++)
           for (let x = 0; x < frame; x++) {
             const i = (y * width + f * frame + x) * 4 + 3;
-            data[i] = ns[i] = Math.min(255, data[i] * hi);
+            data[i] = Math.min(255, data[i] * hi);
+            if (!record.mossPayload) ns[i] = data[i];
           }
       }
     }

@@ -1,4 +1,4 @@
-fn volumeBake(uv: vec2f, dims: vec3f, origin: vec3f, extent: vec3f, terrain: texture_2d<f32>, trees: texture_2d<f32>, details: texture_3d<f32>, field: texture_3d<f32>, transportMap: texture_2d<f32>, linearSampler: sampler, grid: f32, mode: i32, directionMode: f32, sun: vec3f, sunColour: vec3f, lamp: vec3f, power: f32) -> vec4f {
+fn volumeBake(uv: vec2f, dims: vec3f, origin: vec3f, extent: vec3f, terrain: texture_2d<f32>, trees: texture_2d<f32>, details: texture_3d<f32>, field: texture_3d<f32>, transportMap: texture_2d<f32>, linearSampler: sampler, grid: f32, mode: i32, directionMode: f32, sun: vec3f, daylight: f32, sunColour: vec3f, lampColour: vec3f, lamp: vec3f, power: f32) -> vec4f {
     let pixel=floor(uv*vec2f(dims.x,dims.y*dims.z));
     let cell=vec3f(pixel.x,floor(pixel.y/dims.z),pixel.y-floor(pixel.y/dims.z)*dims.z);
     let p=origin+(cell+vec3f(.5))/dims*extent;
@@ -49,6 +49,6 @@ fn volumeBake(uv: vec2f, dims: vec3f, origin: vec3f, extent: vec3f, terrain: tex
         visibility[ray]=tr;
     }
     let transport=textureSampleLevel(transportMap,linearSampler,uv,0.);
-    let indirect=vec3f(.035,.055,.085)*(.15+transport.a*.85)+transport.rgb*sunColour*.8+vec3f(1.,.43,.12)*power/(10.+dist*dist)*visibility.y*.14;
+    let indirect=(vec3f(.035,.055,.085)*(.15+transport.a*.85)+transport.rgb*sunColour*.8)*(.04+.96*daylight)+lampColour*power/(10.+dist*dist)*visibility.y*.14;
     return vec4f(indirect,visibility.x);
 }

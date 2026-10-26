@@ -1,3 +1,4 @@
+import { createNightWorld } from "./night-world.js";
 import { buildDeadwood } from "./deadwood.js";
 import deadwoodSource from "./deadwood-data.js?raw";
 import { PreparedSunShadow } from "./prepared-shadows.js";
@@ -92,6 +93,7 @@ import {
 } from "./terrain-field.js";
 import {
   makeNormal,
+  bakeMossEnvironment,
   bakeVolume,
   refreshLighting,
   readLighting,
@@ -258,6 +260,7 @@ lamp.position.set(6, height(6, 5) + 3, 5);
 lamp.castShadow = true;
 lamp.shadow.mapSize.set(512, 512);
 lamp.shadow.bias = -0.001;
+lamp.shadow.radius = 3;
 scene.add(lamp);
 const lampOrb = new T.Mesh(
   new T.SphereGeometry(0.16, 12, 8),
@@ -265,6 +268,7 @@ const lampOrb = new T.Mesh(
 );
 lampOrb.visible = false;
 scene.add(lampOrb);
+const nightWorld = createNightWorld(scene, camera, lightUniforms, renderer);
 const sunDirection = new T.Vector3(),
   sky = new Sky();
 sky.scale.setScalar(7000);
@@ -305,7 +309,7 @@ function applySolar() {
   sunDirection.fromArray(state.direction).normalize();
   lightUniforms.daylight.value = state.daylight;
   sun.intensity = 2.6 * state.daylight;
-  ambient.intensity = 0.025 + 0.825 * state.daylight;
+  ambient.intensity = 0.16 + 0.69 * state.daylight;
   sun.color.setRGB(
     1,
     0.73 + 0.23 * Math.max(0, sunDirection.y),
@@ -322,7 +326,8 @@ function applySolar() {
     angularDiameterDegrees: 0.535,
     cloudHeight: 650,
   };
-  $("lookSun").disabled = sunDirection.y <= 0;
+  $("lookSun").textContent =
+    sunDirection.y > 0 ? "Look at sun" : "Look at moon";
   $("sunValue").textContent = `${state.elevation.toFixed(0)}°`;
   $("clockValue").textContent =
     `${String(Math.floor(worldHour)).padStart(2, "0")}:${String(Math.floor((worldHour % 1) * 60)).padStart(2, "0")}`;
@@ -330,7 +335,10 @@ function applySolar() {
 }
 $("lookSun").onclick = () => {
   const p = camera.position.clone();
-  controls.target.copy(p).addScaledVector(sunDirection, 100);
+  controls.target
+    .copy(p)
+    .addScaledVector(sunDirection, sunDirection.y > 0 ? 100 : -100);
+  camera.lookAt(controls.target);
   controls.update();
 };
 $("dayCycle").onchange = (e) => {
@@ -387,6 +395,7 @@ updateSunShadow(true);
 const cache = new BakeCache(),
   world = makeWorld();
 applyTreeInfluence(world.trees);
+bakeMossEnvironment();
 let clusters = [],
   grass = null,
   shrubs = [],
@@ -460,6 +469,11 @@ document.addEventListener("mousemove", (e) => {
 });
 window.addEventListener("keydown", (e) => {
   if (e.target.matches("input,select,button")) return;
+  if (e.code === "KeyT" && !e.repeat) {
+    $("torch").checked = !$("torch").checked;
+    nightWorld.setTorch($("torch").checked);
+    lightDirty = true;
+  }
   keys.add(e.code);
   if (["KeyW", "KeyA", "KeyS", "KeyD", "Space"].includes(e.code))
     e.preventDefault();
@@ -517,6 +531,10 @@ $("treeLod").onchange = (e) => (forcedTree = Number(e.target.value));
 $("grassLod").onchange = (e) => (forcedGrass = Number(e.target.value));
 $("gi").onchange = (e) =>
   (lightUniforms.bakedEnabled.value = e.target.checked ? 1 : 0);
+$("torch").onchange = (e) => {
+  nightWorld.setTorch(e.target.checked);
+  lightDirty = true;
+};
 $("dynamic").onchange = (e) => {
   dynamic = e.target.checked;
   lamp.intensity = dynamic ? 700 : 0;
@@ -966,7 +984,30 @@ function animate(now) {
   sky.position.copy(camera.position);
   sky.updateMatrixWorld();
   updateSunShadow();
-  if (dynamic) {
+  const torchActive = nightWorld.update(
+    now / 1000,
+    lightUniforms.daylight.value,
+    sunDirection,
+    document.body.classList.contains("exploring"),
+    lamp,
+  );
+  diagnostics.night = {
+    torch: torchActive,
+    moon: 1 - lightUniforms.daylight.value,
+    fire: nightWorld.fireStats,
+  };
+  lampOrb.visible = dynamic && !torchActive;
+  if (!torchActive) lamp.intensity = dynamic ? 700 : 0;
+  // Direct torch movement is per-frame. The cached-geometry radiance refresh is
+  // throttled below; it never rebuilds occupancy or vegetation.
+  lightUniforms.liveLampPosition.value.copy(lamp.position);
+  lightUniforms.liveLampPower.value = lamp.intensity;
+  lightUniforms.liveLampColour.value.set(
+    lamp.color.r,
+    lamp.color.g,
+    lamp.color.b,
+  );
+  if (dynamic && !torchActive) {
     const t = now * 0.0004;
     lamp.position.set(
       camera.position.x + Math.sin(t) * 9,
@@ -979,10 +1020,10 @@ function animate(now) {
   }
   if (
     !diagnostics.baking &&
-    (dynamic || lightDirty) &&
+    (dynamic || torchActive || lightDirty) &&
     now - lastLighting > 180
   ) {
-    refreshLighting(renderer, sunDirection, lamp.position, dynamic ? 700 : 0);
+    refreshLighting(renderer, sunDirection, lamp.position, lamp.intensity);
     lastLighting = now;
     lightDirty = false;
   }
@@ -1106,6 +1147,7 @@ if (import.meta.env.DEV)
 async function start() {
   await cache.open();
   const assets = await loadAssets();
+  await nightWorld.prepare();
   progress("Baking cloud density and sunlight", 0.015);
   await prepareClouds(
     renderer,

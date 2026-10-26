@@ -14,7 +14,17 @@ This pass separates reusable geometry from illumination and presentation work.
 
 ## Moss
 
-A vertex mask depends on age class, height, seeded aspect and broken colonies. Saplings have little coverage; mature and old trunks have broader coverage. The material blends to moss reflectance rather than multiplying a green tint into dark bark. Its albedo is captured into HLODs, with a mean reflectance passed to voxel occupancy. This is an artistic ecological approximation, not a claim that age alone determines moss growth.
+Moss potential is baked as irregular object-space colonies with age and height falloff. A persistent 256 x 256 habitat field stores moisture and canopy shelter. The shader combines that field with an approximation of surface exposure along the daylight sun path; it does not follow the current sun, so colonies do not move overnight. This is a moisture/exposure approximation, not a seasonal growth simulation.
+
+The repeating UV sine detail was removed. Fine variation now follows the bark. HLOD normal alpha stores moss potential separately from silhouette alpha, and mip generation averages it without applying alpha-coverage amplification. Near wood, captured trees, shrubs and merged forest HLODs use the same habitat response.
+
+Moss usually favours moisture and shelter, but it is not restricted to surfaces that never receive direct sunlight. Sources: [University of Maryland Extension](https://extension.umd.edu/resource/moss-landscape) and [RHS moss guidance](https://www.rhs.org.uk/garden-inspiration/plants-we-love/the-magic-of-moss).
+
+## Night exploration
+
+The Carry torch control (or T while exploring) equips a camera-relative wooden torch with a charred, continuously folded cloth head, ray-marched volumetric flames, a small recycled smoke plume, warm inverse-square point illumination and soft filtered shadows. The ray march integrates emission through the volume and stops at the charred cloth, retaining gaps around the head. A 32 x 48 x 24 heat/fuel grid is advected on the GPU at 60 fixed steps per second, with a four-step catch-up limit. Fuel enters around the cloth surface; cooling and turbulent flow break up the flame. This is a lightweight combustion approximation, not a full fluid-pressure or chemical solver. The carried prop sits 1.15 m ahead of the camera, with a visible shaft. A GPU reduction of the visible emission field supplies energy, temperature and the emission centroid. One asynchronous 1-pixel readback is allowed in flight, at most 10 times per second; these measurements drive the point emitter instead of a separate sine flicker. Direct lighting, foliage transmission and refreshed voxel radiance share its colour and strength. It reuses the moving-light voxel radiance pass; static occupancy and surface atlases are retained. The checkbox can be selected before entering exploration.
+
+The Look at sun button becomes Look at moon at night. A full-moon approximation travels opposite the sun, with cool directional lighting attenuated by cloud coverage and baked sky visibility. A seeded star field fades with daylight and cloud opacity. Faint night hemisphere illumination represents diffuse sky/starlight; stars are not separate point lights. The existing 24-minute day remains unchanged. Lunar phases and a separate lunar calendar are not simulated.
 
 ## Sunlight and colour
 
@@ -30,3 +40,5 @@ References:
 - [PBRT: Volume scattering processes](https://pbr-book.org/4ed/Volume_Scattering/Volume_Scattering_Processes)
 
 Local verification includes delayed grass residency and long paused-frame handoffs, age-dependent moss coverage, topology and finite attributes, habitat/worker parity, and streamed voxel indexing. Browser rendering was checked in WebGPU and WebGL2 with morning, midday and evening settings. Warm-cache first-scene readiness was around 14-16 seconds in the measured sessions. The complete 300 m grass ring still has asynchronous preparation cost; worker cache retrieval is typically below a few milliseconds, but that is not end-to-end tile residency latency. No tests were added to GitHub Actions.
+
+The night pass was also rendered in WebGPU and WebGL2. Both reported a running 32 x 48 x 24 fire simulation and completed asynchronous emission reductions without runtime errors. Moon/stars, the restored road blend, and the wrapped torch were inspected in-browser. These are functional/visual checks, not a controlled FPS benchmark or a claim of photographic fire fidelity.
