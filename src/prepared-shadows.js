@@ -1,5 +1,6 @@
 import {
   ShadowNode,
+  PointShadowNode,
   NodeMaterial,
   FrontSide,
   BackSide,
@@ -8,6 +9,17 @@ import {
 } from "three/webgpu";
 import * as N from "three/tsl";
 import { prepareForRender } from "./renderer-jobs.js";
+
+// With inactive-light shadows skipped, a cube map can be sampled long before
+// its first shadow draw. Allocate the render attachment before shader bindings
+// capture it; otherwise the first draw replaces/destroys the sampled GPU image.
+export class ResidentPointShadow extends PointShadowNode {
+  setupRenderTarget(shadow, builder) {
+    const result = super.setupRenderTarget(shadow, builder);
+    builder.renderer.initRenderTarget(result.shadowMap);
+    return result;
+  }
+}
 
 // Stable, minimal depth materials avoid the shared override material being rebuilt
 // synchronously for each newly encountered tree material in Three's shadow pass.

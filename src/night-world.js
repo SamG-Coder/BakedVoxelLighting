@@ -102,7 +102,6 @@ export function createNightWorld(scene, camera, U, renderer, trees) {
   torch.add(handle);
   const wrapping = new T.MeshBasicNodeMaterial({
     color: 0x32241a,
-    roughness: 1,
   });
   wrapping.maskNode = torchOn.greaterThan(0.5);
   // Overlapping angled cloth bands give the head a wrapped silhouette.
@@ -224,6 +223,7 @@ export function createNightWorld(scene, camera, U, renderer, trees) {
       stars.updateMatrixWorld();
       const active = enabled && carry;
       torchOn.value = active ? 1 : 0;
+      torch.visible = active;
       const roadsActive = roadTorches.update(camera, seconds, power, warmth);
       fire.advance(seconds, active || roadsActive);
       power +=
@@ -241,6 +241,8 @@ export function createNightWorld(scene, camera, U, renderer, trees) {
         .applyQuaternion(torch.quaternion)
         .add(torch.position);
       smoke.forEach((puff, i) => {
+        puff.visible = active;
+        if (!active) return;
         const age = (seconds * 0.35 + i / smoke.length) % 1;
         puff.position.copy(smokeOrigin);
         puff.position.x += Math.sin(age * 5 + i) * 0.045 + age * 0.16;

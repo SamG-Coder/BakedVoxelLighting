@@ -1,7 +1,7 @@
 import { createNightWorld } from "./night-world.js";
 import { buildDeadwood } from "./deadwood.js";
 import deadwoodSource from "./deadwood-data.js?raw";
-import { PreparedSunShadow } from "./prepared-shadows.js";
+import { PreparedSunShadow, ResidentPointShadow } from "./prepared-shadows.js";
 import { getGPUUploads } from "./gpu-uploads.js";
 import {
   prepareForRender,
@@ -154,9 +154,12 @@ const backendChoice =
   new URLSearchParams(location.search).get("backend") ||
   localStorage.getItem("worldBackend") ||
   "webgpu";
+const profileRendering =
+  import.meta.env.DEV && new URLSearchParams(location.search).has("profile");
 const renderer = new T.WebGPURenderer({
   forceWebGL: backendChoice === "webgl2",
   samples: 4,
+  trackTimestamp: profileRendering,
   canvas: $("world"),
   antialias: true,
   powerPreference: "high-performance",
@@ -261,6 +264,8 @@ lamp.castShadow = true;
 lamp.shadow.mapSize.set(512, 512);
 lamp.shadow.bias = -0.001;
 lamp.shadow.radius = 3;
+lamp.shadow.autoUpdate = false;
+lamp.shadow.shadowNode = new ResidentPointShadow(lamp);
 scene.add(lamp);
 const lampOrb = new T.Mesh(
   new T.SphereGeometry(0.16, 12, 8),
@@ -376,6 +381,12 @@ function setSun(degrees) {
   updateSunShadow(true);
 }
 function updateSunShadow(force = false) {
+  // A zero-energy light contributes nothing. Keep the existing shadow map and
+  // pipeline alive, but do not redraw the forest into it until sunrise.
+  if (sun.intensity === 0) {
+    sun.shadow.needsUpdate = false;
+    return;
+  }
   const now = performance.now();
   if (!force && now - lastSunShadowUpdate < 50) return;
   lastSunShadowUpdate = now;
@@ -934,6 +945,15 @@ function animate(now) {
     return;
   }
   const cpuStart = performance.now();
+  const phases = profileRendering ? {} : null;
+  let phaseStart = cpuStart;
+  const mark = profileRendering
+    ? (name) => {
+        const t = performance.now();
+        phases[name] = t - phaseStart;
+        phaseStart = t;
+      }
+    : null;
   lightUniforms.time.value = now / 1000;
   if (lastCycleTime !== null && cycleRunning)
     worldHour = advanceHour(worldHour, (now - lastCycleTime) / 1000);
@@ -990,6 +1010,7 @@ function animate(now) {
   sky.position.copy(camera.position);
   sky.updateMatrixWorld();
   updateSunShadow();
+  mark?.("cameraAndSun");
   const torchActive = nightWorld.update(
     now / 1000,
     lightUniforms.daylight.value,
@@ -1005,6 +1026,9 @@ function animate(now) {
   };
   lampOrb.visible = dynamic && !torchActive;
   if (!torchActive) lamp.intensity = dynamic ? 700 : 0;
+  // Retain full per-frame six-face shadows whenever the lamp is emitting.
+  // castShadow stays constant, avoiding material/pipeline churn on toggles.
+  lamp.shadow.needsUpdate = lamp.intensity > 0;
   // Direct torch movement is per-frame. The cached-geometry radiance refresh is
   // throttled below; it never rebuilds occupancy or vegetation.
   lightUniforms.liveLampPosition.value.copy(lamp.position);
@@ -1034,6 +1058,7 @@ function animate(now) {
     lastLighting = now;
     lightDirty = false;
   }
+  mark?.("fireAndLighting");
   diagnostics.treeLevels = updateLOD(
     clusters,
     camera,
@@ -1052,6 +1077,7 @@ function animate(now) {
   updateShrubs(deadwood, camera, scene);
   updateTerrain(camera);
   updateMergedVisibility(clusters, camera, scene);
+  mark?.("visibility");
   diagnostics.mergedVisibility = mergedStats;
   diagnostics.grassBake = grassBakeStats;
   diagnostics.grassStreaming = grassStreamingStats;
@@ -1064,7 +1090,17 @@ function animate(now) {
   };
   renderer.info.reset();
   updateClouds(renderer, now, lightUniforms, camera);
+  mark?.("clouds");
   composer.render();
+  mark?.("render");
+  if (profileRendering)
+    diagnostics.renderProfile = {
+      phases,
+      cpuMs: performance.now() - cpuStart,
+      draws: renderer.info.render.drawCalls,
+      passes: renderer.info.render.frameCalls,
+      triangles: renderer.info.render.triangles,
+    };
   frameClock.end(performance.now() - cpuStart);
   if (now - frameTime > 250) {
     diagnostics.frameTiming = frameClock.read();

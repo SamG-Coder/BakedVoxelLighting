@@ -1,6 +1,10 @@
 import { reorderVoxels } from "./voxel-details.js";
 import { prepareForRender } from "./renderer-jobs.js";
 import { uploadTextures } from "./gpu-uploads.js";
+import {
+  publishedLighting,
+  retireLightingInputs,
+} from "./lighting-resources.js";
 import { nativeVolumeSource } from "./native-kernels.js";
 import tslBakeSource from "./tsl-baking.js?raw";
 import { volumePass, readPixels } from "./tsl-baking.js";
@@ -332,13 +336,14 @@ export async function bakeVolume(
     },
     TERRAIN_GRID,
   );
+  const published = publishedLighting(renderer, n);
   await timed("lightingPrepareMs", () =>
     prepareForRender(
       renderer,
       scene,
       camera,
       scene,
-      target,
+      published.target,
       null,
       0,
       () => 180,
@@ -346,21 +351,24 @@ export async function bakeVolume(
   );
   // This binding is consumed by the world, not by the lighting bake pass.
   // Make it resident before publishing the matching volume origin/dimensions.
-  await uploadTextures(renderer, [directionMap]);
+  await uploadTextures(renderer, [directionMap, published.directions]);
+  // Copy into a stable DataTexture to preserve canonical row orientation on
+  // both backends. No await between publication and the matching radiance pass.
+  renderer.copyTextureToTexture(directionMap, published.directions);
   if (active) {
-    active.target.dispose();
-    active.field.dispose();
-    active.transportMap?.dispose();
-    active.directionMap?.dispose();
-    active.material.dispose();
-    active.quad.geometry.dispose();
-    active.cachedTexture?.dispose();
+    void retireLightingInputs(renderer, [
+      active.field,
+      active.transportMap,
+      active.material,
+      active.quad.geometry,
+    ]);
   }
+  void retireLightingInputs(renderer, [target, directionMap]);
   active = {
-    target,
+    target: published.target,
     field,
     geometry,
-    directionMap,
+    directionMap: published.directions,
     transport,
     transportMap,
     origin,
@@ -370,7 +378,7 @@ export async function bakeVolume(
     material: quad.material,
     cachedTexture: null,
   };
-  lightUniforms.directionAtlas.value = directionMap;
+  lightUniforms.directionAtlas.value = published.directions;
   lightUniforms.volumeMin.value.copy(origin);
   lightUniforms.bakeDims.value.copy(dims);
   refreshLighting(
@@ -405,7 +413,7 @@ export async function bakeVolume(
       lightUniforms.liveLampPower.value,
     );
     const data = new Uint8Array(((n * n * n) / 2) * 4);
-    await readPixels(renderer, target, 0, 0, n, (n * n) / 2, data);
+    await readPixels(renderer, active.target, 0, 0, n, (n * n) / 2, data);
     record = { data, n, key };
     await cache.put(key, record);
   }
