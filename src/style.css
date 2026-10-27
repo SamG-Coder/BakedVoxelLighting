@@ -617,3 +617,31 @@ footer {
   font-size: 12px;
   pointer-events: none;
 }
+#chopHint {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 5;
+  color: #f4f3df;
+  background: #132016ba;
+  padding: 8px 14px;
+  border-radius: 5px;
+  font: 12px/1.4 system-ui;
+  pointer-events: none;
+  text-align: center;
+  max-width: 90vw;
+}
+#chopHint[hidden] {
+  display: none;
+}
+#chopHint:not([hidden])::before {
+  content: "";
+  position: fixed;
+  left: 50%;
+  bottom: calc(50vh - 25px);
+  width: 3px;
+  height: 3px;
+  background: #fff9;
+  border-radius: 50%;
+}

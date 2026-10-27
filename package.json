@@ -26,7 +26,8 @@
   "license": "MIT",
   "type": "module",
   "dependencies": {
-    "three": "0.186.1"
+    "three": "0.186.1",
+    "three-bvh-csg": "^0.0.18"
   },
   "devDependencies": {
     "@playwright/test": "^1.64.1",

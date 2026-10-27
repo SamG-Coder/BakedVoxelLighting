@@ -34,6 +34,7 @@ import { decorate, fadeMaterial, lightUniforms } from "./lighting.js";
 import { growPlant } from "./growth.js";
 import { growTreeAsync } from "./growth-jobs.js";
 import { treeTint } from "./plant-appearance.js";
+import { applyTreeEdits } from "./tree-edit-visibility.js";
 import {
   captureSurface,
   instanced,
@@ -297,6 +298,7 @@ export async function buildTrees(world, assets, identity, progress = () => {}) {
               treeStreamingStats.cancelled++;
               return;
             }
+            applyTreeEdits(entry, group, prototypes);
             levels[level] = group;
             group = null;
             treeStreamingStats.completed++;
@@ -416,6 +418,8 @@ export async function bakeTreeHLOD(
     // Keep every tree anchored to its terrain position, including the farthest level.
     c.levels[2] = middle;
     c.levels[3] = far;
+    applyTreeEdits(c, middle, prototypes);
+    applyTreeEdits(c, far, prototypes);
   }
   clusters.atlasIdentity = identity;
   clusters.lodRevision = (clusters.lodRevision || 0) + 1;

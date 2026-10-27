@@ -152,8 +152,9 @@ export function foliageResponse(material, uv = null) {
     : a;
 }
 const fullFade = new T.Vector2(0, 1);
-const fadeRange = N.uniform(fullFade).onObjectUpdate(
-  ({ object }) => object.material.userData.fade?.value || fullFade,
+const fadeRange = N.uniform(fullFade, "vec2").onObjectUpdate(
+  ({ material, object }) =>
+    (material || object.material).userData?.fade?.value || fullFade,
 );
 const fadeMask = K.fadeMask({ p: N.screenCoordinate.xy, range: fadeRange });
 export function fadeTSL(material) {

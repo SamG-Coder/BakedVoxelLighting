@@ -1,4 +1,5 @@
 import { mergedClusterBounds } from "./merged-data.js";
+import { applyTreeEdits } from "./tree-edit-visibility.js";
 import { WorkerClient } from "./worker-client.js";
 const worker = new WorkerClient(
   new Worker(new URL("./merged-worker.js", import.meta.url), {
@@ -131,6 +132,7 @@ async function install(c, record, clusters, version) {
     mesh.material.dispose();
     return;
   }
+  applyTreeEdits(c, group, clusters.prototypes);
   disposeVegetationGroup(replaceLODLevel(c, 3, group));
   c.farMerged = true;
   mergedStats.baked++;

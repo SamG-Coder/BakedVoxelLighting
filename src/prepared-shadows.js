@@ -88,6 +88,13 @@ export class PreparedSunShadow extends ShadowNode {
   }
   materialFor(source) {
     let material = this.materials.get(source);
+    if (Array.isArray(source)) {
+      if (!material) {
+        material = source.map((m) => this.materialFor(m));
+        this.materials.set(source, material);
+      }
+      return material;
+    }
     if (!material) {
       material = new NodeMaterial();
       material.name = "Prepared vegetation depth";

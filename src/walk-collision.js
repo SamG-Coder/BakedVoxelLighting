@@ -10,6 +10,7 @@ export class WalkCollision {
     this.data = new Float32Array(trees.length * 5);
     this.result = { x: 0, z: 0 };
     this.checks = 0;
+    this.logs = [];
     for (let i = 0; i < trees.length; i++) {
       const t = trees[i],
         path = prototypes[t.variant].paths.find((p) => p.rootFlare);
@@ -40,6 +41,57 @@ export class WalkCollision {
       this.next[i] = this.head[bucket];
       this.head[bucket] = i;
     }
+  }
+  nearTrees(origin, reach, trees, result) {
+    const gx = cell(origin.x),
+      gz = cell(origin.z),
+      n = Math.ceil(reach / CELL) + 1;
+    for (let z = Math.max(0, gz - n); z <= Math.min(N - 1, gz + n); z++)
+      for (let x = Math.max(0, gx - n); x <= Math.min(N - 1, gx + n); x++)
+        for (let i = this.head[x + z * N]; i >= 0; i = this.next[i]) {
+          const k = i * 5,
+            r = reach + this.data[k + 3];
+          if (
+            !trees[i].felled &&
+            (this.data[k] - origin.x) ** 2 +
+              (this.data[k + 1] - origin.z) ** 2 <
+              r * r
+          )
+            result.push(i);
+        }
+    return result;
+  }
+  pickTree(origin, direction, reach, trees) {
+    const gx = cell(origin.x),
+      gz = cell(origin.z);
+    let nearest = reach,
+      found = -1;
+    const a = direction.x * direction.x + direction.z * direction.z;
+    if (a < 0.01) return -1;
+    for (let z = Math.max(0, gz - 1); z <= Math.min(N - 1, gz + 1); z++)
+      for (let x = Math.max(0, gx - 1); x <= Math.min(N - 1, gx + 1); x++)
+        for (let i = this.head[x + z * N]; i >= 0; i = this.next[i]) {
+          if (trees[i].felled) continue;
+          const k = i * 5,
+            dx = origin.x - this.data[k],
+            dz = origin.z - this.data[k + 1],
+            r = this.data[k + 3];
+          const b = dx * direction.x + dz * direction.z,
+            disc = b * b - a * (dx * dx + dz * dz - r * r);
+          if (disc < 0) continue;
+          const t = (-b - Math.sqrt(disc)) / a,
+            y = origin.y + direction.y * t - this.data[k + 2];
+          if (
+            t >= 0 &&
+            t < nearest &&
+            y > 0.35 &&
+            y < Math.min(2.2, this.data[k + 4])
+          ) {
+            nearest = t;
+            found = i;
+          }
+        }
+    return found;
   }
   move(x, z, targetX, targetZ, feetY) {
     const dx = targetX - x,
@@ -80,6 +132,31 @@ export class WalkCollision {
               x = this.data[k] + (vx / d) * radius;
               z = this.data[k + 1] + (vz / d) * radius;
             }
+        for (const log of this.logs) {
+          const lx = log.bx - log.ax,
+            lz = log.bz - log.az,
+            length = lx * lx + lz * lz;
+          const t = Math.max(
+            0,
+            Math.min(
+              1,
+              ((x - log.ax) * lx + (z - log.az) * lz) /
+                Math.max(0.0001, length),
+            ),
+          );
+          const y = log.ay + (log.by - log.ay) * t;
+          if (feetY + 1.7 < y - log.r || feetY > y + log.r) continue;
+          const px = log.ax + lx * t,
+            pz = log.az + lz * t,
+            vx = x - px,
+            vz = z - pz,
+            d = Math.hypot(vx, vz),
+            r = log.r + 0.28;
+          if (d < r && d > 0.00001) {
+            x = px + (vx / d) * r;
+            z = pz + (vz / d) * r;
+          }
+        }
       }
     }
     this.result.x = x;

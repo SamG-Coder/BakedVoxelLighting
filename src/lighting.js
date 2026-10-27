@@ -165,6 +165,7 @@ export async function bakeVolume(
       (await digest(
         JSON.stringify({
           world: world.bakeIdentity,
+          treeEdits: world.treeEditRevision || 0,
           n,
           origin: origin.toArray(),
           assetHash,

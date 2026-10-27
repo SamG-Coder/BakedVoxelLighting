@@ -54,7 +54,7 @@ export async function buildVoxelDetailsAsync(world, n, min, size, signal) {
       min: { x: min.x, y: min.y, z: min.z },
       size: { x: size.x, y: size.y, z: size.z },
       identity: world.grassBake.identity || world.surfaceIdentity,
-      trees: query(world.areaIndexes.trees),
+      trees: query(world.areaIndexes.trees).filter((t) => !t.felled),
       objects: query(world.areaIndexes.objects),
       grass,
       terrain,
