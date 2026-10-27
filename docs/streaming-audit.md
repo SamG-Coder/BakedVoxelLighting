@@ -76,6 +76,49 @@ colour allocation were checked with the pool pixel/lifetime fixture separately.
 
 ## Remaining architecture boundaries
 
+### Three.js allocation audit
+
+Inspected the installed 0.186.1 `Renderer`, `RenderList`, `RenderObject`,
+`RenderObjects`, `NodeManager`, `NodeMaterialObserver`, `Bindings`,
+`UniformsGroup`, `Geometries`, `Textures`, and WebGPU backend/binding utilities.
+`RenderList.getNextRenderItem()` already pools entries, NodeManager reuses its
+cache-key scratch arrays, and WebGPU descriptors are largely reused. Geometry
+attribute enumeration and material-key construction are mostly initialization
+or invalidation paths; removing them blindly would risk stale geometry/shaders.
+
+Three recurring sites are patched by `scripts/patch-three-allocations.mjs`:
+
+- `Bindings._update`: retain numeric resource IDs in per-bind-group storage and
+  construct the identical string cache key only when bindings need replacement.
+  Skipped groups, external/default textures, texture generations and sampler
+  changes retain their existing behavior.
+- `UniformsGroup._getBufferForType`: cache signed/unsigned integer views of the
+  same uniform buffer. Release clears the views before a later buffer allocation.
+- Uniform update-range deduplication: reuse boolean flags instead of rebuilding
+  a Set's entries each update. Range objects were already cached by Three.
+
+The patch modifies the runtime `three.webgpu.js` bundle used by both backends;
+original source modules remain available for differential tests. `postinstall`
+reapplies it after `npm ci`. It rejects versions other than 0.186.1 or mismatched
+source sites, and is idempotent. No dependency license or shader code is changed.
+The local differential fixture performs 10,000 binding/uniform updates, checking
+identical bytes, ranges and invalidation keys, persistent integer-view identity,
+and zero ID-to-string conversions for unchanged bindings. This establishes the
+specific sites removed, not an allocation-free browser or renderer.
+
+After applying the Three patch, a 2 km traversal at 24 m/s with the bounded
+profiler display completed with p95 **16.8 ms**, p99 **16.8 ms**, maximum interval
+**100 ms**, and two long tasks (maximum 83 ms). Heap moved from 1.976 GB to
+2.108 GB while detailed sections became resident; shader states finished at 215,
+all referenced by live render objects. No application errors were captured.
+This shorter run is not a direct replacement for the three-lap soak above, and
+does not establish the same tail timing on every run.
+
+Remaining source-level allocation sites include WebGPU per-pass state-cache
+objects and the rest-parameter arrays used by dynamic render-object hashes.
+Browser command encoding and asynchronous compilation also create objects.
+The patches above do not establish zero total allocations or a 59 FPS floor.
+
 `compileAsync` is cooperative main-thread JavaScript plus asynchronous GPU
 pipeline creation; it is not a worker. Geometry generation, atlas processing,
 voxel details and forest merging already use workers. Moving the entire renderer

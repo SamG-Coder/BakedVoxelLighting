@@ -4,6 +4,7 @@
   "description": "Desktop Three.js woodland with browser GPU baking, indexed streaming, vegetation HLOD and a 24-minute day/night cycle.",
   "main": "index.js",
   "scripts": {
+    "postinstall": "node scripts/patch-three-allocations.mjs",
     "test": "node scripts/verify.mjs",
     "dev": "vite --host 127.0.0.1",
     "build": "vite build",
