@@ -7,7 +7,7 @@ import {
 } from "./terrain-field.js";
 import { TREE_TYPES } from "./plant-catalog.js";
 import { patchNoise, woodlandHabitat } from "./habitat.js";
-export const WORLD_VERSION = "watershed-woodland-18";
+export const WORLD_VERSION = "watershed-woodland-19";
 export function random(seed) {
   return () => {
     seed |= 0;

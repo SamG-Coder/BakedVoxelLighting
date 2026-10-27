@@ -8,7 +8,7 @@ The playable world remains 4 x 4 km. A deterministic 5.12 km regional heightfiel
 2. Resolve drainage using a priority flood. Each interior cell has a downhill receiver; accumulation gives upstream catchment area.
 3. Apply five stream-power-inspired incision passes, re-routing between passes.
 4. Extract connected channels above an area threshold, widen reaches with catchment area and smooth their coordinates without breaking graph connections.
-5. Generate the playable 2001 x 2001 heightfield, run the existing droplet and thermal erosion, carve all channels, and calculate moisture, slope and traffic paths.
+5. Generate the playable 2001 x 2001 heightfield, run the existing droplet and thermal erosion, carve all channels, and calculate moisture, slope and traffic paths. Side paths project their origins onto the generated main road before slope-cost routing; exact attachment points survive grid snapping and smoothing.
 6. Generate coherent forest habitat, then use age-dependent spacing, species communities, canopy gaps and mortality to place trees and deadwood.
 7. Use the same moisture/canopy fields for understory species and ground-cover baking.
 
@@ -31,12 +31,14 @@ The full-resolution erosion and path pass runs in `terrain-generation-worker.js`
 
 `node scripts/verify-watershed.mjs` reports 1,929 regional channel segments and 36 junctions. All 1,528 tested interior channel centres are submerged (minimum measured centre depth 0.617m). The continuous water surface uses 350 pages / 185,206 triangles and 8,655,192 bytes of vertex/index buffers, versus 328 pages / 305,519 triangles / 12,575,076 bytes for the overlapping strips. Page count increases slightly because clipping and culling use a regular spatial lattice. Reaches crossing the playable boundary are now included and their surface is clipped at the boundary.
 
-The generated population contains 146,815 trees and 1,861 fallen-wood records. One-hectare cells range from 0 to 217 trees, with 91.76 trees/ha averaged across the entire map including open ground. These are generated tree counts, not a field inventory calibrated to a diameter threshold. The age/diameter metadata is approximate. The earlier 300-600 stems/ha research target has not been imposed on every dense stand; that would require more small regeneration stems and further performance validation.
+The generated population contains 146,590 trees and 1,827 fallen-wood records after connecting the branch roads. One-hectare cells range from 0 to 217 trees, with 91.62 trees/ha averaged across the entire map including open ground. These are generated tree counts, not a field inventory calibrated to a diameter threshold. The age/diameter metadata is approximate. The earlier 300-600 stems/ha research target has not been imposed on every dense stand; that would require more small regeneration stems and further performance validation.
 
 ## Validation
 
 Run locally:
 
+- `node scripts/verify-route-network.mjs`
+- `node scripts/verify-road-torches.mjs`
 - `node scripts/verify-watershed.mjs`
 - `node scripts/verify-river.mjs`
 - `node scripts/verify-river-union.mjs`
@@ -52,7 +54,7 @@ No tests were added to GitHub Actions. Browser checks cover both graphics backen
 
 ## Limits and subsequent refinements
 
-This pass does not simulate long-term lateral river migration, bank collapse, flood deposition, lakes or soil chemistry. Roads use the existing slope/moisture cost routing, not a settlement history model. The regional horizon is terrain only and does not extend the playable forest population. Water is now a continuous height-field surface, but it cannot represent stacked water, waterfalls or overhangs. It retains the existing baked sky/cloud reflection estimate; screen-space scene reflections have not been added. Deliberate road crossings and disconnected branch routes remain follow-on work.
+This pass does not simulate long-term lateral river migration, bank collapse, flood deposition, lakes or soil chemistry. Roads use the existing slope/moisture cost routing, not a settlement history model. The regional horizon is terrain only and does not extend the playable forest population. Water is now a continuous height-field surface, but it cannot represent stacked water, waterfalls or overhangs. It retains the existing baked sky/cloud reflection estimate; screen-space scene reflections have not been added. Branch roads now connect to the main road. Deliberate bridges or fords remain follow-on work at existing water crossings.
 
 ## Research basis
 

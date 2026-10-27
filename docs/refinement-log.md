@@ -108,3 +108,22 @@ Validation:
 - WebGPU and WebGL2 both reached ready and rendered the continuous confluence without captured errors. WebGL2's default preview was about 48 FPS; this verifies backend correctness, not the 60 FPS target. No tests were added to Actions.
 
 Current good: continuous water joins, smaller water buffers, worker-side preparation, terrain-fitting roots, coherent bank materials and purposeful torch placement. Current bad: streaming hitches and memory remain the main performance problem; roads still need connected routes and proper water crossings; distant tree lighting and repeated grass patches remain visible. No new bitmap asset was needed to fix the geometry defect.
+
+
+## Selected improvement: connected branch roads
+
+Fixed-coordinate branch origins had become stranded after the watershed/erosion pass moved the main road. Side paths now project their intended origin onto the generated main-road polyline, then use the existing slope/moisture routing to reach their destinations. Exact projected endpoints are retained through grid snapping and smoothing. The eastern path gains a real connection; the western path starts at the main road rather than continuing as an unintended spur across it.
+
+- Both branches attach exactly: (-230.078, 40) and (-232, -30). Routing, traffic, soil compaction, tree exclusion and vegetation bakes use the same connected polylines. World bake revision advances to 19.
+- The main road is unchanged. Branch lengths change from 379.3 / 409.0 m to 612.0 / 249.5 m. The eastern connection is dry; existing main-road and western river crossings are still pending bridge/ford work.
+- Projection and routing occur during terrain worker preparation. No new render pass, material, texture or per-frame route lookup. The two recognised junctions now place two sparse lamps instead of one; existing daytime fire shutdown remains active.
+- New seed population: 146,590 trees and 1,827 fallen-wood records. This is an updated clearance/placement result, not a density or quality setting reduction.
+
+Validation:
+- Production connectivity checks pass at both attachment points, plus 1,188 road-surface samples checking traffic continuity and tree exclusion. Projection covers segment interiors, endpoints and duplicate vertices; no attachment introduces a segment longer than 4 m.
+- Road torch placement/constructor, habitat/worker parity and river-union checks pass. River topology/buffer counts are unchanged.
+- Matching WebGPU overview shows the new connection through the woodland. The same 200 m main-road walk at 6 m/s measured before/after median 16.7/16.7 ms, p95 16.8/16.8 ms, p99 16.8/16.8 ms, maximum 33.4/66.7 ms. Intervals above 33.4 ms: 0/1. This is a visual/connectivity improvement, not a performance win or proof of minimum 59 FPS. Streaming hitches remain. Independent build caches/populations differ; callback intervals are not GPU timings.
+- WebGPU and WebGL2 rendered the connected overview without captured errors. WebGL2 default preview was about 52 FPS, so its 60 FPS target remains unmet. Pages production build passes; no Actions tests added.
+- Local captures/reports: `evidence/road-network-before-*` and `evidence/road-network-after-*`. No new bitmap asset was needed for a route topology correction.
+
+Current good: connected branch roads, continuous river joins, terrain-fitting roots, coherent bank materials and sparse landmark lamps. Current bad: streaming spikes/high memory, missing bridges/fords, distant tree lighting mismatch, repeated grass patches and forest-floor tiling. Next performance priority remains finding the actual long-frame work during streaming; the full 60 FPS objective stays open.

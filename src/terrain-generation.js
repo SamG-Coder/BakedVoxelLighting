@@ -7,6 +7,7 @@ import {
 } from "./terrain-math.js";
 import { bankExposure, bankGravel } from "./riverbank.js";
 import { buildRiverData } from "./river-data.js";
+import { nearestRoutePoint } from "./route-network.js";
 export function generateTerrain() {
   const N = 2001,
     CELL = TERRAIN_SIZE / (N - 1);
@@ -224,7 +225,7 @@ export function generateTerrain() {
       Math.round((p[1] + TERRAIN_SIZE / 2) / CELL),
     ];
   }
-  function route(from, to, width, wear) {
+  function route(from, to, width, wear, attach = false) {
     const [sx, sz] = gridPoint(from),
       [tx, tz] = gridPoint(to),
       start = sz * N + sx,
@@ -274,6 +275,9 @@ export function generateTerrain() {
       if (i === start) break;
     }
     path.reverse();
+    // Dijkstra uses a 2 m lattice. Preserve the exact segment attachment before
+    // smoothing, so the road and its traffic/verge bake share the same junction.
+    if (attach) path[0] = from.slice();
     // Repeated smoothing models corners worn by walkers, then splat traffic density.
     for (let pass = 0; pass < 4; pass++)
       for (let k = 1; k < path.length - 1; k++) {
@@ -296,11 +300,21 @@ export function generateTerrain() {
     }
     return path;
   }
-  const routes = [
-    route([6, TERRAIN_SIZE / 2 - 30], [-7, -TERRAIN_SIZE / 2 + 30], 4.2, 1),
-    route([-4, 12], [290, -180], 2.3, 0.7),
-    route([-6, -30], [-310, -260], 1.7, 0.45),
-  ];
+  const mainRoute = route(
+    [6, TERRAIN_SIZE / 2 - 30],
+    [-7, -TERRAIN_SIZE / 2 + 30],
+    4.2,
+    1,
+  );
+  const routes = [mainRoute];
+  for (const [hint, destination, width, wear] of [
+    [[-4, 12], [290, -180], 2.3, 0.7],
+    [[-6, -30], [-310, -260], 1.7, 0.45],
+  ]) {
+    routes.push(
+      route(nearestRoutePoint(mainRoute, hint), destination, width, wear, true),
+    );
+  }
   // Cleared verge, built once from the road curves for indexed tree lookups.
   const roadVerge = new Uint8Array(N * N);
   routes.forEach((path, routeIndex) => {
@@ -336,7 +350,7 @@ export function generateTerrain() {
     deposited,
     grid: N,
     extent: TERRAIN_SIZE,
-    generation: "regional-watersheds-v1",
+    generation: "regional-watersheds-connected-roads-v2",
     routes: routes.map((p) => p.length),
     maxChange: heights.reduce(
       (m, h, i) => Math.max(m, Math.abs(h - original[i])),
