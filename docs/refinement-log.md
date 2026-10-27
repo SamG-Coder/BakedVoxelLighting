@@ -11,6 +11,7 @@ This is a working good/bad list, updated from rendered checks and measurements. 
 - The ten-species plant palette retains 1024px per species and isolated mip filtering in a 4096 x 3072 atlas.
 - WebGPU and WebGL2 both reached ready and rendered without captured shader errors in the browser checks.
 - Existing HLOD handoff and grass streaming unit checks continue to pass.
+- Global shader values now share render-scoped uniform bindings. A matched five-second WebGPU trace reduced node/binding CPU work by 27.8% with the same draw counts and scene detail; traversal spikes still remain.
 
 ## Bad / needs refinement
 
@@ -136,3 +137,34 @@ The first terrain fit changed only vertex height. Downhill roots therefore gaine
 - Browser checks: WebGPU flat, uneven and steep slopes; L0 and transformed L2. WebGL2 steep L0 and transformed L1. No captured shader/runtime errors. The full WebGPU landscape loaded and its slope-root view was inspected (`evidence/root-bend-world.png`).
 - `npm run test:tree-surfaces`, `npm run build` and `git diff --check` passed. The slope fixture accepts `slope=flat` and `slope=steep` alongside its default uneven surface.
 - This remains an instanced root deformation, not a per-tree growth simulation. L3 whole-tree impostors still use their prototype capture. Terrain mesh approximation at different LODs can still differ from the sampled height field; the checks do not establish contact at every position on the map.
+
+## Selected improvement: repeated world-uniform work
+
+The current CPU profile selected render preparation as the next performance target. Every `ref()` use previously made a separate object-scoped `ReferenceNode` for a value already explicitly bound to a world/bake uniform record. That repeatedly resolved and copied the same daylight, wind time, volume transform and light vectors for each object draw.
+
+`ref()` now caches one live UniformNode per source record/type in a WeakMap and uses Three's shared render group. The value accessor preserves both scalar replacement and in-place/replacement vector updates. Render scope is essential: direction baking changes values between render calls within an animation frame. Per-object fade nodes and texture references are unchanged. No density, geometry, textures, render distances or lighting equations were reduced.
+
+Measured locally in the dev WebGPU scene after the root fix, at the same noon viewpoint:
+
+| Five-second trace | Before | After |
+| --- | ---: | ---: |
+| Node update calls | 410,658 | 410,658 |
+| Node update CPU total | 1,374.3 ms | 897.1 ms |
+| Binding update calls | 410,357 | 410,357 |
+| Binding update CPU total | 933.2 ms | 768.1 ms |
+| Combined node/binding CPU | 2,307.5 ms | 1,665.2 ms |
+| Scene draws / reported triangles | 1,332 / 62,018,128 | 1,332 / 62,018,128 |
+
+The combined measured path improved 27.8%. These are instrumented CPU totals, not GPU timings or a claim of 28% higher FPS. The scene was refresh-limited to 60 FPS at this viewpoint.
+
+The same 600m route at 22m/s had 16.7ms median, 16.8ms p95/p99 and 66.6ms maximum before and after. Both had two intervals over 33.4ms; the after run also had additional approximately 33.3ms intervals. An after-run long frame attributed 50.7ms to `animate`, mostly rendering. The change saves steady render CPU time but does **not** establish a streaming-hitch improvement or the minimum-59-FPS requirement. JS heap remained around 2GB; memory is a separate unresolved problem.
+
+Validation:
+
+- `/scripts/uniform-bindings.html?backend=webgpu` and `?backend=webgl2`: real render-target readbacks match the old ReferenceNode path for initial values, scalar changes, vector mutation/replacement, zero/restored power and independent uniform records. Six cases passed on each backend without captured errors.
+- The full WebGPU scene loaded, completed the 600m route, and visibly changed from noon to night. Shader preparation reported no errors. Vite hot replacement briefly produced a river-preparation ordering error during editing; a clean page reload completed successfully.
+- The full WebGL2 scene also loaded, reported 60 FPS at the default view and no preparation errors, and was visually checked at noon. This is a stationary compatibility check, not a WebGL2 traversal benchmark.
+- Existing 14 LOD-handoff checks and 7 grass-streaming checks passed; production build passed. No Actions tests added.
+- Evidence: `evidence/uniform-render-before.json`, `uniform-render-after.json`, `uniform-walk-before.json`, `uniform-walk-after.json`, both `uniform-readback-*.json`, and `uniform-world-day.png` / `uniform-world-night.png`.
+
+Current good: cheaper global uniform updates without lost detail, natural root bends, continuous river joins, connected paths and habitat-based vegetation. Current bad: occasional render-thread spikes, high memory, unfinished water crossings, distant tree-lighting mismatch and repeated grass/ground patterns. Next performance investigation should isolate the remaining slow render calls during first traversal, rather than claiming a smooth-60 result from the median.

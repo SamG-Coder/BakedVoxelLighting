@@ -28,8 +28,30 @@ export async function readPixels(renderer, target, x, y, w, h, destination) {
   } else destination.set(pixels);
   return destination;
 }
-export const ref = (u, name, type = "float") =>
-  N.reference("value", type, u[name]);
+const boundUniforms = new WeakMap();
+export function ref(u, name, type = "float") {
+  const source = u[name];
+  let types = boundUniforms.get(source);
+  if (!types) boundUniforms.set(source, (types = new Map()));
+  let node = types.get(type);
+  if (!node) {
+    // These are explicitly bound world/bake values, not object properties.
+    // A ReferenceNode would resolve and copy each value on every object draw.
+    // Share one binding per source/type and read its current value directly.
+    node = N.uniform(source.value, type).setGroup(N.renderGroup);
+    Object.defineProperty(node, "value", {
+      get: () => source.value,
+      set: (value) => {
+        source.value = value;
+      },
+      configurable: true,
+    });
+    types.set(type, node);
+  }
+  // Render scope is intentional: bake passes change values between render()
+  // calls inside one animation frame. Frame-scoped caching would be stale.
+  return node;
+}
 export function texRef(u, name) {
   const t = N.texture(u[name].value).setUpdateMatrix(false);
   // TextureNode.sample() clones the node, and setup() can disable its update
