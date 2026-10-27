@@ -49,15 +49,33 @@ export function barkColour(x, y, z, seed, species, age = 1) {
   );
 }
 
-export function leafColour(x, y, z, seed) {
+const leafPalettes = [
+  [0.94, 1, 0.89], // oak: muted, deeper green
+  [1.08, 1.04, 0.9], // birch: lighter yellow-green sprays
+  [0.91, 0.98, 1.02], // ash: cooler foliage
+  [0.8, 0.88, 0.91], // pine: darker needles
+];
+const shrubPalettes = [
+  [0.93, 0.98, 0.87],
+  [0.87, 0.94, 0.9],
+  [0.98, 1, 0.93],
+];
+
+export function leafColour(x, y, z, seed, species = 0, age = 1, shrub = false) {
   const colony = patchNoise(x * 0.43 + seed * 0.01, z * 0.43 + y * 0.16, 211);
   const tone = patchNoise(seed * 0.003, 1, 941);
   const value = 0.78 + 0.2 * colony;
+  const palette = (shrub ? shrubPalettes : leafPalettes)[
+    species % (shrub ? 3 : 4)
+  ];
+  // Slightly brighter new growth; the same vertex colour is captured in
+  // the canopy and whole-tree atlases instead of tinting distant trees anew.
+  const young = age === 0 ? 1.035 : 1;
   return [
     value * (0.72 + tone * 0.35 + colony * 0.09),
     value,
     value * (0.57 + (1 - tone) * 0.24),
-  ];
+  ].map((v, i) => v * palette[i] * young);
 }
 
 // Age classes: sapling 0, mature 1, old 2. Older rough bark supports broader

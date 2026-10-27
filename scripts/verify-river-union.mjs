@@ -47,7 +47,7 @@ for (const c of riverData.chunks) {
     faces++;
   }
 }
-function count(x, z) {
+function count(x, z, includeBoundary = false) {
   let hits = 0;
   for (const p of buckets.get(`${Math.floor(x / 2)},${Math.floor(z / 2)}`) ||
     []) {
@@ -55,7 +55,12 @@ function count(x, z) {
       den = (b[1] - c[1]) * (a[0] - c[0]) + (c[0] - b[0]) * (a[1] - c[1]);
     const u = ((b[1] - c[1]) * (x - c[0]) + (c[0] - b[0]) * (z - c[1])) / den;
     const v = ((c[1] - a[1]) * (x - c[0]) + (a[0] - c[0]) * (z - c[1])) / den;
-    if (u > 1e-7 && v > 1e-7 && u + v < 1 - 1e-7) hits++;
+    if (
+      includeBoundary
+        ? u >= -1e-7 && v >= -1e-7 && u + v <= 1 + 1e-7
+        : u > 1e-7 && v > 1e-7 && u + v < 1 - 1e-7
+    )
+      hits++;
   }
   return hits;
 }
@@ -88,7 +93,9 @@ for (const s of riverSegments) {
     const x = s.ax + (s.bx - s.ax) * t + 0.013,
       z = s.az + (s.bz - s.az) * t + 0.017;
     if (Math.abs(x) > 1998 || Math.abs(z) > 1998) continue;
-    assert.equal(count(x, z), 1, `channel centre coverage ${x},${z}`);
+    // A point on a shared diagonal belongs to both adjacent closed triangles.
+    // Strict interiors above test overlap; closed triangles here test coverage.
+    assert.ok(count(x, z, true) >= 1, `channel centre coverage ${x},${z}`);
     centres++;
   }
 }

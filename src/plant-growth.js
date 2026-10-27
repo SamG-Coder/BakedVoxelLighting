@@ -13,6 +13,8 @@ const profiles = [
     tip: 0.14,
     spray: 1.2,
     limbs: 13,
+    fork: 0.95,
+    wander: 0.2,
   },
   {
     height: 14.2,
@@ -20,9 +22,11 @@ const profiles = [
     spread: 3.0,
     crown: 0.34,
     lift: 0.13,
-    tip: -0.23,
-    spray: 0.85,
+    tip: -0.36,
+    spray: 1.08,
     limbs: 15,
+    fork: 0.56,
+    wander: 0.09,
   },
   {
     height: 13.3,
@@ -31,8 +35,10 @@ const profiles = [
     crown: 0.3,
     lift: 0.14,
     tip: 0.08,
-    spray: 1.02,
+    spray: 1.15,
     limbs: 14,
+    fork: 0.72,
+    wander: 0.11,
   },
   {
     height: 15.0,
@@ -40,9 +46,11 @@ const profiles = [
     spread: 3.5,
     crown: 0.28,
     lift: 0.025,
-    tip: -0.07,
-    spray: 0.9,
+    tip: 0.04,
+    spray: 1.3,
     limbs: 25,
+    fork: 0.88,
+    wander: 0.055,
   },
 ];
 export function growStructure(seed, species = 0, shrub = false, age = 1) {
@@ -51,17 +59,22 @@ export function growStructure(seed, species = 0, shrub = false, age = 1) {
     leaves = [],
     joints = [],
     segments = [];
-  const form = age % 3;
+  const form = Math.max(0, Math.min(2, Math.floor(age)));
   const profile = { ...profiles[species % 4] };
   if (!shrub) {
     // Saplings, competition-grown canopy trees, and broad veteran/open-grown trees.
     profile.spread *= [0.65, 0.86, 1.18][form];
     profile.crown = form === 1 ? Math.max(0.42, profile.crown) : profile.crown;
     profile.limbs = Math.round(profile.limbs * [0.7, 1, 1.1][form]);
+    profile.spray *= [0.78, 0.95, 1][form];
   }
   const ageScale = [0.52, 1.06, 1.2][form];
   const height = profile.height * ageScale * (0.92 + rng() * 0.16);
   const crownCenter = new T.Vector3(0, shrub ? 1.2 : height * 0.64, 0);
+  // One growth bias per plant creates a coherent asymmetric crown. It is baked
+  // into all representations, never animated or picked independently per LOD.
+  const crownPhase = rng() * Math.PI * 2;
+  const crownBias = shrub ? 0.22 : species === 3 ? 0.09 : 0.18;
   function addPath(points, radius, endRadius = 0.002) {
     endRadius = Math.min(endRadius, radius * 0.3);
     const radii = points.map(
@@ -119,7 +132,9 @@ export function growStructure(seed, species = 0, shrub = false, age = 1) {
     normal.y = normal.y * 0.35 + 0.85;
     normal.normalize();
     const value = 0.94 + rng() * 0.06;
-    const colour = leafColour(p.x, p.y, p.z, seed).map((v) => v * value);
+    const colour = leafColour(p.x, p.y, p.z, seed, species, form, shrub).map(
+      (v) => v * value,
+    );
     leaves.push({
       p: p.toArray(),
       r: [e.x, e.y, e.z],
@@ -144,14 +159,18 @@ export function growStructure(seed, species = 0, shrub = false, age = 1) {
     let p = start.clone();
     const steps = depth === 2 ? 6 : depth === 1 ? 4 : 3;
     for (let i = 1; i <= steps; i++) {
-      const bend = depth === 0 ? shape.tip : shape.lift;
+      // Birch terminal twigs hang; oak scaffold limbs turn back upward. Pine
+      // branch shelves stay flatter than their upward-growing terminal shoots.
+      const bend = depth === 0 ? shape.tip * (0.4 + i / steps) : shape.lift;
+      const wander = shape.wander ?? 0.12;
       d.add(
-        new T.Vector3((rng() - 0.5) * 0.12, bend, (rng() - 0.5) * 0.12),
+        new T.Vector3((rng() - 0.5) * wander, bend, (rng() - 0.5) * wander),
       ).normalize();
       p = p.clone().addScaledVector(d, len / steps);
       points.push(p);
     }
     const path = addPath(points, radius, Math.max(0.0018, radius * 0.07));
+    path.order = depth;
     if (parent)
       path.attachment = {
         p: start.clone(),
@@ -162,16 +181,25 @@ export function growStructure(seed, species = 0, shrub = false, age = 1) {
     if (depth > 0) {
       // Lateral forks start along the parent, not at a single terminal junction.
       for (let k = 0; k < (depth === 2 ? 3 : 2); k++) {
-        const t = 0.3 + k * (depth === 2 ? 0.23 : 0.38) + (rng() - 0.5) * 0.06,
+        const paired = !shrub && species === 2 && k < 2;
+        const jitter = (rng() - 0.5) * 0.035;
+        const t = paired ? 0.4 : 0.3 + k * (depth === 2 ? 0.23 : 0.38) + jitter,
           s = sample(path, t);
-        const side = new T.Vector3(-s.d.z, 0.28, s.d.x)
+        const side = new T.Vector3(-s.d.z, 0, s.d.x)
           .normalize()
           .multiplyScalar(k % 2 ? 1 : -1);
         const next = s.d
           .clone()
           .multiplyScalar(0.6)
-          .addScaledVector(side, 0.76)
-          .addScaledVector(up, 0.18)
+          .addScaledVector(side, shape.fork ?? 0.76)
+          .addScaledVector(
+            up,
+            !shrub && species === 3
+              ? 0.06
+              : !shrub && species === 1
+                ? 0.1
+                : 0.24,
+          )
           .normalize();
         joints.push(s.p.clone());
         limb(
@@ -189,14 +217,14 @@ export function growStructure(seed, species = 0, shrub = false, age = 1) {
     } else {
       for (let k = 0; k < 4; k++) {
         const s = sample(path, 0.18 + k * 0.24);
-        const side = new T.Vector3(-s.d.z, 0.35, s.d.x)
+        const side = new T.Vector3(-s.d.z, 0, s.d.x)
           .normalize()
           .multiplyScalar(k % 2 ? 1 : -1);
         const d = s.d
           .clone()
           .multiplyScalar(0.55)
           .addScaledVector(side, 0.65)
-          .addScaledVector(up, 0.18)
+          .addScaledVector(up, !shrub && species === 1 ? -0.13 : 0.18)
           .normalize();
         spray(s.p, d, shape.spray * (0.72 + rng() * 0.38));
         if (k > 1)
@@ -218,10 +246,13 @@ export function growStructure(seed, species = 0, shrub = false, age = 1) {
       lift: kind === 1 ? -0.08 : 0.08,
       tip: kind === 1 ? -0.18 : 0.03,
       spray: kind === 1 ? 0.66 : kind === 0 ? 0.85 : 0.72,
+      wander: kind === 1 ? 0.17 : 0.12,
     };
     for (let k = 0; k < stems; k++) {
       const a = k * 2.39996 + rng() * 0.6,
-        reach = kind === 1 ? 1.7 + rng() * 1.25 : 0.9 + rng() * 0.8;
+        reach =
+          (kind === 1 ? 1.7 + rng() * 1.25 : 0.9 + rng() * 0.8) *
+          (1 + crownBias * Math.cos(a - crownPhase));
       const top =
         kind === 1
           ? 0.65 + rng() * 0.55
@@ -229,28 +260,31 @@ export function growStructure(seed, species = 0, shrub = false, age = 1) {
             ? 1.6 + rng() * 0.8
             : 1.15 + rng() * 0.65;
       const points = [];
+      const baseX = Math.cos(a) * (kind === 1 ? 0.35 : 0.16);
+      const baseZ = Math.sin(a) * (kind === 1 ? 0.35 : 0.16);
+      const sweep = (rng() - 0.5) * 0.65;
       for (let j = 0; j <= 6; j++) {
         const t = j / 6,
-          rad = 0.13 + reach * t;
+          rad = reach * (kind === 0 ? t * t : t);
         const y =
           kind === 1
             ? Math.sin(t * Math.PI * 0.9) * top
             : top * (1 - Math.pow(1 - t, 1.65));
         points.push(
           new T.Vector3(
-            Math.cos(a + t * 0.25) * rad,
+            baseX + Math.cos(a + t * sweep) * rad,
             Math.max(-0.04, y - 0.04),
-            Math.sin(a + t * 0.25) * rad,
+            baseZ + Math.sin(a + t * sweep) * rad,
           ),
         );
       }
       const stem = addPath(points, kind === 1 ? 0.022 : 0.045, 0.002);
       for (let j = 1; j <= 5; j++) {
-        const s = sample(stem, j / 6),
+        const s = sample(stem, (j + (rng() - 0.5) * 0.22) / 6),
           b = a + (j % 2 ? 0.8 : -0.8),
           d = new T.Vector3(
             Math.cos(b),
-            kind === 1 ? 0.1 : 0.45,
+            kind === 1 ? 0.04 : kind === 2 ? 0.7 : 0.35,
             Math.sin(b),
           ).normalize();
         joints.push(s.p.clone());
@@ -280,18 +314,61 @@ export function growStructure(seed, species = 0, shrub = false, age = 1) {
     // The trunk mesh itself forms the root buttresses, avoiding intersecting spikes.
     stem.rootFlare = {
       radius: stem.radii[0],
-      reach: ageScale * (1.15 + rng() * 0.35),
+      // Saplings have a modest collar, not a scaled-down veteran buttress.
+      reach: Math.min(
+        form === 0 ? stem.radii[0] * 0.55 : Infinity,
+        ageScale * [0.16, 0.78, 1][form] * (1.15 + rng() * 0.35),
+      ),
       phase,
     };
+    // Retain a pine's whorled growth, but not identical five-spoke shelves.
+    // Unequal annual extension, branch survival and inter-whorl shoots are
+    // authored into the source so every baked LOD inherits the same silhouette.
+    const pineNodes = [];
+    if (species === 3) {
+      let k = 0;
+      const groups = [];
+      while (k < profile.limbs) {
+        const count = Math.min(profile.limbs - k, 3 + Math.floor(rng() * 4));
+        groups.push({
+          count,
+          extension: 0.65 + rng() * 0.85,
+          phase: rng() * Math.PI * 2,
+        });
+        k += count;
+      }
+      const total = groups.slice(0, -1).reduce((n, g) => n + g.extension, 0);
+      let growth = 0;
+      for (const g of groups) {
+        const base =
+          profile.crown +
+          (growth / Math.max(1, total)) * (0.88 - profile.crown);
+        for (let j = 0; j < g.count; j++) {
+          pineNodes.push({
+            fraction: Math.min(0.92, base + (rng() - 0.5) * 0.075),
+            angle: g.phase + (j / g.count) * Math.PI * 2 + (rng() - 0.5) * 0.65,
+            reach: 0.68 + rng() * 0.62,
+            lift: -0.18 + rng() * 0.43,
+          });
+        }
+        growth += g.extension;
+      }
+    }
     for (let k = 0; k < profile.limbs; k++) {
       const pine = species === 3;
       const fraction = pine
-        ? profile.crown + Math.floor(k / 5) * 0.135
-        : profile.crown +
-          (1 - profile.crown - 0.06) * (k / (profile.limbs - 1));
-      const s = sample(stem, fraction + (rng() - 0.5) * 0.025);
+        ? pineNodes[k].fraction
+        : species === 2
+          ? profile.crown +
+            (Math.floor(k / 2) /
+              Math.max(1, Math.ceil(profile.limbs / 2) - 1)) *
+              (0.92 - profile.crown)
+          : profile.crown +
+            (1 - profile.crown - 0.06) * (k / (profile.limbs - 1));
+      const attachmentJitter = (rng() - 0.5) * 0.025;
+      const s = sample(stem, fraction + (species === 2 ? 0 : attachmentJitter));
       const angle = pine
-        ? (k % 5) * Math.PI * 0.4 + Math.floor(k / 5) * 0.42
+        ? pineNodes[k].angle
         : species === 2
           ? Math.floor(k / 2) * 2.1 + (k % 2) * Math.PI
           : k * 2.399963 + rng() * 0.45;
@@ -299,14 +376,22 @@ export function growStructure(seed, species = 0, shrub = false, age = 1) {
         profile.spread *
         ageScale *
         (0.83 + rng() * 0.35) *
-        Math.pow(1 - fraction, 0.48);
+        (pine ? pineNodes[k].reach : 1) *
+        (1 + crownBias * Math.cos(angle - crownPhase)) *
+        Math.pow(1 - fraction, pine ? 0.8 : species === 0 ? 0.3 : 0.48);
       const direction = new T.Vector3(
         Math.cos(angle),
-        pine ? 0.03 : 0.16 + fraction * 0.28,
+        pine
+          ? pineNodes[k].lift
+          : species === 0
+            ? 0.25 + fraction * 0.55
+            : species === 2
+              ? 0.48 + fraction * 0.4
+              : 0.25 + fraction * 0.25,
         Math.sin(angle),
       ).normalize();
       joints.push(s.p.clone());
-      limb(
+      const scaffold = limb(
         s.p,
         direction,
         spread,
@@ -315,6 +400,7 @@ export function growStructure(seed, species = 0, shrub = false, age = 1) {
         profile,
         s,
       );
+      scaffold.trunkFraction = fraction;
     }
     // Fine terminal shoots finish the leader without a large isolated leaf ball.
     const tip = sample(stem, 0.9);

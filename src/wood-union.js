@@ -5,6 +5,10 @@ import { barkColour, mossCoverage } from "./plant-appearance.js";
 // Sparse narrow-band implicit union, baked once per prototype. The marching
 // cubes share their interpolated edge vertices: a fork is one surface.
 export function unionWood(paths, plant, coarse = false) {
+  // A flared capsule otherwise makes a huge rounded bulb under the soil.
+  // Close the root at its source base instead; terrain conformance still owns
+  // the visible buttresses, and branch/trunk unions remain watertight.
+  const rootBottom = paths.find((p) => p.rootFlare)?.points[0].y;
   const step = coarse ? 0.105 : 0.065,
     blend = 0.105,
     segments = [];
@@ -28,6 +32,8 @@ export function unionWood(paths, plant, coarse = false) {
       const pad = Math.max(r0, r1) + reach + blend + step * 2;
       const min = a.map((v, k) => Math.min(v, b[k]) - pad),
         max = a.map((v, k) => Math.max(v, b[k]) + pad);
+      if (rootBottom !== undefined)
+        min[1] = Math.max(min[1], rootBottom - step);
       for (let k = 0; k < 3; k++) {
         lo[k] = Math.min(lo[k], min[k]);
         hi[k] = Math.max(hi[k], max[k]);
@@ -146,7 +152,9 @@ export function unionWood(paths, plant, coarse = false) {
             (v) => v.distance < closest.distance + blend,
           ),
         }
-      : result;
+      : rootBottom === undefined
+        ? result
+        : Math.max(result, rootBottom - y);
   }
   function sample(x, y, z) {
     const k = key(x, y, z);

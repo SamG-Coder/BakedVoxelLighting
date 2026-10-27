@@ -4,6 +4,7 @@ import terrainNoiseSource from "./terrain-noise.js?raw";
 import riverbankSource from "./riverbank.js?raw";
 import riverProfileSource from "./river-profile.js?raw";
 import { createNightWorld } from "./night-world.js";
+import { createSpatialAtmosphere } from "./spatial-atmosphere.js";
 import { buildDeadwood } from "./deadwood.js";
 import deadwoodSource from "./deadwood-data.js?raw";
 import { PreparedSunShadow, ResidentPointShadow } from "./prepared-shadows.js";
@@ -253,6 +254,22 @@ diagnostics.antialiasing = {
 };
 renderer.info.autoReset = false;
 const controls = new FlyControls(camera, renderer.domElement);
+const ambience = createSpatialAtmosphere(camera, (state) => {
+  $("sound").textContent = state.enabled
+    ? "Mute atmosphere · M"
+    : "Enable atmosphere · M";
+  $("sound").setAttribute("aria-pressed", String(state.enabled));
+  $("soundStatus").textContent =
+    state.error ||
+    (state.enabled
+      ? "3D birds, water and wind · headphones recommended"
+      : "Sound starts when you explore, fly or enable it here.");
+});
+diagnostics.audio = ambience.stats;
+$("sound").onclick = () => ambience.toggle();
+$("soundVolume").oninput = (e) =>
+  ambience.setVolume(Number(e.target.value) / 100);
+if (import.meta.hot) import.meta.hot.dispose(() => ambience.dispose());
 controls.target.set(-8, height(-8, -23) + 5, -23);
 if (new URLSearchParams(location.search).get("view") === "river") {
   camera.position.set(
@@ -489,6 +506,7 @@ function resumeFly(keepExploring = false) {
     "Drag to look · Scroll to travel · Fly: WASD + Q/E · Shift faster · Esc to show controls";
 }
 async function enterCameraMode(walk) {
+  void ambience.startOnExplore();
   walking = walk;
   document.body.classList.add("exploring");
   controls.enabled = !walk;
@@ -532,6 +550,7 @@ document.addEventListener("mousemove", (e) => {
 });
 window.addEventListener("keydown", (e) => {
   if (e.target.matches("input,select,button")) return;
+  if (e.code === "KeyM" && !e.repeat) void ambience.toggle();
   if (e.code === "KeyT" && !e.repeat) {
     $("torch").checked = !$("torch").checked;
     nightWorld.setTorch($("torch").checked);
@@ -1090,6 +1109,7 @@ function animate(now) {
     camera.position.y = floor;
   }
   sky.position.copy(camera.position);
+  ambience.update(now, worldHour);
   sky.updateMatrixWorld();
   updateSunShadow();
   mark?.("cameraAndSun");

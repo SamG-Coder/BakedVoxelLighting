@@ -1,20 +1,31 @@
 import { riverSegments } from "./watershed.js";
+import {
+  TERRAIN_TILE_COUNT,
+  TERRAIN_FINE_SEGMENTS,
+} from "./terrain-mesh-layout.js";
 
 // A single lattice owns every wet point, including confluences. Spatial pages
 // share field values at their edges. Built once in the terrain worker.
 export function buildRiverData(
   heightAt,
-  { step = 2, chunkLength = 125, segments = riverSegments, extent = 4000 } = {},
+  {
+    extent = 4000,
+    chunkLength = extent / TERRAIN_TILE_COUNT,
+    step = chunkLength / TERRAIN_FINE_SEGMENTS,
+    segments = riverSegments,
+  } = {},
 ) {
   if (!(step > 0 && chunkLength >= step && extent > 0))
     throw new Error("Invalid river mesh dimensions");
-  const cells = Math.ceil(chunkLength / step),
+  const cells = Math.ceil(chunkLength / step - 1e-10),
     pageSize = cells * step;
   const half = extent / 2,
     pages = new Map();
   let length = 0;
   for (const s of segments) {
-    const radius = Math.max(s.wa, s.wb) * 1.12 + step * 2;
+    // Search the bank shelf too: the rendered triangle intersection owns the
+    // shoreline, not an arbitrary width cap through still-deep water.
+    const radius = Math.max(s.wa, s.wb) + 12 + step * 2;
     if (
       Math.min(s.ax, s.bx) > half ||
       Math.max(s.ax, s.bx) < -half ||
@@ -75,7 +86,7 @@ export function buildRiverData(
             z - s.az - s.fz * s.length * t,
           );
           const width = s.wa + (s.wb - s.wa) * t;
-          cover = Math.max(cover, width * 1.12 - distance);
+          cover = Math.max(cover, width + 12 - distance);
           if (distance < nearest) {
             nearest = distance;
             fallback = s;

@@ -11,9 +11,13 @@ import { height, random } from "./world-data.js";
 import { instanced } from "./impostors.js";
 import { buildRiver } from "./river.js";
 import { prioritizeArea } from "./streaming-view.js";
+import {
+  TERRAIN_TILE_COUNT,
+  TERRAIN_FINE_SEGMENTS,
+} from "./terrain-mesh-layout.js";
 const terrainTiles = [];
 function terrainSurface(x, z, segments) {
-  const size = TERRAIN_SIZE / 32,
+  const size = TERRAIN_SIZE / TERRAIN_TILE_COUNT,
     step = size / segments;
   const tx =
     Math.floor((x + TERRAIN_SIZE / 2) / size) * size - TERRAIN_SIZE / 2;
@@ -38,19 +42,23 @@ function terrainSurface(x, z, segments) {
   return surface;
 }
 export function terrainCameraFloor(x, z) {
-  const size = TERRAIN_SIZE / 32;
+  const size = TERRAIN_SIZE / TERRAIN_TILE_COUNT;
   const ix = Math.floor((x + TERRAIN_SIZE / 2) / size),
     iz = Math.floor((z + TERRAIN_SIZE / 2) / size);
   const tile =
-    ix >= 0 && ix < 32 && iz >= 0 && iz < 32
-      ? terrainTiles[ix + iz * 32]
+    ix >= 0 && ix < TERRAIN_TILE_COUNT && iz >= 0 && iz < TERRAIN_TILE_COUNT
+      ? terrainTiles[ix + iz * TERRAIN_TILE_COUNT]
       : null;
   const current = tile?.levels.find((mesh) => mesh.visible);
-  const segments = current?.geometry.parameters.widthSegments || 48;
+  const segments =
+    current?.geometry.parameters.widthSegments || TERRAIN_FINE_SEGMENTS;
   // A coarse surface can remain visible while the close mesh's pages load.
   // Keep the camera above both it and the eventual 48-subdivision replacement.
-  let surface = Math.max(terrainSurface(x, z, 48), height(x, z));
-  if (segments !== 48)
+  let surface = Math.max(
+    terrainSurface(x, z, TERRAIN_FINE_SEGMENTS),
+    height(x, z),
+  );
+  if (segments !== TERRAIN_FINE_SEGMENTS)
     surface = Math.max(surface, terrainSurface(x, z, segments));
   return surface + 1.85;
 }
@@ -136,17 +144,19 @@ export function buildEnvironment(scene, assets) {
     { ground: true, fade: false },
   );
   const ground = new T.Group();
-  const size = TERRAIN_SIZE / 32;
+  const size = TERRAIN_SIZE / TERRAIN_TILE_COUNT;
   const waterQuery = {};
-  for (let z = 0; z < 32; z++)
-    for (let x = 0; x < 32; x++) {
+  for (let z = 0; z < TERRAIN_TILE_COUNT; z++)
+    for (let x = 0; x < TERRAIN_TILE_COUNT; x++) {
       const cx = -TERRAIN_SIZE / 2 + (x + 0.5) * size,
         cz = -TERRAIN_SIZE / 2 + (z + 0.5) * size;
       const riverTile =
         sampleHydrology(cx, cz, waterQuery).distance < size * 0.75 + 20;
       // Channel beds retain full precision at every distance. One resident mesh
       // avoids constructing/uploading three identical copies of these pages.
-      const levels = (riverTile ? [48] : [48, 12, 4]).map((segments) => {
+      const levels = (
+        riverTile ? [TERRAIN_FINE_SEGMENTS] : [TERRAIN_FINE_SEGMENTS, 12, 4]
+      ).map((segments) => {
         const g = new T.PlaneGeometry(size, size, segments, segments);
         g.rotateX(-Math.PI / 2);
         const p = g.attributes.position,

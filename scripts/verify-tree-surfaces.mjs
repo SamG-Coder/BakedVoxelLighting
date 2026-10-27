@@ -42,6 +42,37 @@ assert.ok(
 );
 graft.dispose();
 
+const rooted = unionWood(
+  [
+    {
+      points: [new Vector3(0, -0.22, 0), new Vector3(0, 2, 0)],
+      radii: [0.35, 0.2],
+      rootFlare: { reach: 1.3, phase: 0.7 },
+    },
+  ],
+  { seed: 19, species: 0, age: 1 },
+);
+const rp = rooted.attributes.position;
+for (let i = 0; i < rp.count; i++)
+  assert.ok(
+    rp.getY(i) >= -0.22001,
+    "root union must not generate a buried capsule bulb",
+  );
+const rootEdges = new Map();
+const ri = rooted.index.array;
+for (let i = 0; i < ri.length; i += 3)
+  for (let j = 0; j < 3; j++) {
+    const a = ri[i + j],
+      b = ri[i + ((j + 1) % 3)];
+    const key = a < b ? `${a}:${b}` : `${b}:${a}`;
+    rootEdges.set(key, (rootEdges.get(key) || 0) + 1);
+  }
+assert.ok(
+  [...rootEdges.values()].every((n) => n === 2),
+  "trimmed root base remains closed",
+);
+rooted.dispose();
+
 let vertices = 0;
 for (let species = 0; species < 4; species++) {
   const source = growStructure(9801 + species * 137, species, false, 1);
@@ -60,6 +91,11 @@ for (let species = 0; species < 4; species++) {
       plant.high.attributes.position.count * 0.8,
   );
   for (const g of [plant.high, plant.low, plant.farWood]) {
+    for (let i = 0; i < g.attributes.position.count; i++)
+      assert.ok(
+        g.attributes.position.getY(i) >= -0.22001,
+        "all wood LODs share the root base",
+      );
     for (const name of ["position", "normal", "uv", "color"])
       assert.ok(g.attributes[name].array.every(Number.isFinite));
     const n = g.attributes.normal;
