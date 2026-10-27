@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { grassHabitat } from "../src/habitat.js";
+import { createHash } from "node:crypto";
+import { grassHabitat, grassPopulation } from "../src/habitat.js";
 import { GRASS_TYPES, GRASS_MIXES } from "../src/plant-catalog.js";
 import { grassLand, generateGrassBatches } from "../src/grass-data.js";
 import {
@@ -20,6 +21,32 @@ const meadow = {
   canopy: 0,
 };
 const forest = { ...meadow, canopy: 0.95 };
+// Golden population from before the sparse-source change (8014756). Adding
+// accent grass must retain every original plant, including size and colour.
+const restored = Array.from(grassPopulation(0, 0, 42, 3900, 24, () => meadow));
+const original = restored.filter((p) => p.type < 10);
+const fingerprint = createHash("sha256")
+  .update(
+    JSON.stringify(
+      original.map((p) => [
+        p.index,
+        p.type,
+        ...[p.x, p.y, p.z, p.sx, p.sy, p.angle, ...p.colour].map((v) =>
+          Math.round(v * 1e6),
+        ),
+      ]),
+    ),
+  )
+  .digest("hex");
+assert.equal(original.length, 3168);
+assert.equal(
+  fingerprint,
+  "f158aa9048cbcaf09664e81151689329ffb692fff01a4a62f3b422cbe279996e",
+);
+assert.ok(
+  restored.length > original.length * 1.2,
+  "new plants supplement dense cover",
+);
 for (const mix of GRASS_MIXES) {
   assert.equal(
     mix.length,

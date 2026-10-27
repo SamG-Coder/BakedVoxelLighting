@@ -1,4 +1,4 @@
-import { GRASS_TYPES, GRASS_MIXES } from "./plant-catalog.js";
+import { GRASS_TYPES, GRASS_MIXES, GRASS_BASE_SHARE } from "./plant-catalog.js";
 import { bankExposure } from "./riverbank.js";
 export const smooth = (a, b, x) => {
   const t = Math.max(0, Math.min(1, (x - a) / (b - a)));
@@ -157,34 +157,47 @@ export function* grassPopulation(
   sample,
   habitatOverride = null,
 ) {
-  const rng = seededRandom(seed);
-  for (let i = 0; i < count; i++) {
-    const xx = x + (rng() - 0.5) * span,
-      zz = z + (rng() - 0.5) * span,
-      land = sample(xx, zz);
-    if (!grassAllowed(land, rng)) continue;
-    const habitat = habitatOverride || grassHabitat(xx, zz, land);
-    if (rng() > habitat.density) continue;
-    const type = chooseGrass(habitat.weights, rng()),
-      form = GRASS_TYPES[type];
-    const sy =
-      (form.height[0] + rng() * (form.height[1] - form.height[0])) *
-      habitat.height;
-    const sx =
-      (form.width[0] + rng() * (form.width[1] - form.width[0])) *
-      (habitat.width ?? 1);
-    const variation = 0.94 + rng() * 0.12;
-    const colour = grassColour(habitat);
-    yield {
-      index: i,
-      x: xx,
-      z: zz,
-      y: land.height - 0.035,
-      type,
-      sy,
-      sx,
-      angle: habitat.flow + (rng() - 0.5) * 2.5,
-      colour: colour.map((v) => v * variation),
-    };
+  // Independent streams keep the original cover in place when accent plants
+  // are added. All callers (workers, patch and ground bakes) use these passes.
+  for (let pass = 0; pass < 2; pass++) {
+    const rng = seededRandom(pass === 0 ? seed : seed ^ 0x6a09e667);
+    const candidates =
+      pass === 0
+        ? count
+        : Math.round((count * (1 - GRASS_BASE_SHARE)) / GRASS_BASE_SHARE);
+    for (let i = 0; i < candidates; i++) {
+      const xx = x + (rng() - 0.5) * span,
+        zz = z + (rng() - 0.5) * span,
+        land = sample(xx, zz);
+      if (!grassAllowed(land, rng)) continue;
+      const habitat = habitatOverride || grassHabitat(xx, zz, land);
+      if (rng() > habitat.density) continue;
+      const type = chooseGrass(
+          habitat.weights,
+          pass === 0
+            ? rng() * GRASS_BASE_SHARE
+            : GRASS_BASE_SHARE + rng() * (1 - GRASS_BASE_SHARE),
+        ),
+        form = GRASS_TYPES[type];
+      const sy =
+        (form.height[0] + rng() * (form.height[1] - form.height[0])) *
+        habitat.height;
+      const sx =
+        (form.width[0] + rng() * (form.width[1] - form.width[0])) *
+        (habitat.width ?? 1);
+      const variation = 0.94 + rng() * 0.12;
+      const colour = grassColour(habitat);
+      yield {
+        index: pass === 0 ? i : count + i,
+        x: xx,
+        z: zz,
+        y: land.height - 0.035,
+        type,
+        sy,
+        sx,
+        angle: habitat.flow + (rng() - 0.5) * 2.5,
+        colour: colour.map((v) => v * variation),
+      };
+    }
   }
 }
