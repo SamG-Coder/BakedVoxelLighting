@@ -19,7 +19,7 @@ npm ci
 npm run dev -- --port 5173
 ```
 
-Open http://127.0.0.1:5173. Drag to orbit; scroll to travel. Explore world enables mouse look and WASD, with Shift for faster walking and Escape to release the pointer. Next viewpoint cycles cameras. The landing-page dark gradient is removed while exploring so the scene lighting remains visible. Tree and grass controls can force levels for inspection. The sun slider updates lighting; the moving-light checkbox animates a point light. Bake & cache world saves the current sun/volume configuration. Clear cache removes this application's stored bakes.
+Open http://127.0.0.1:5173. Click Fly to capture the cursor and hide the UI for free flight (Escape restores the controls): drag to look around in place, scroll to travel along the view direction, W/S to fly along the view direction (including climbing/diving), A/D to strafe, Q/E to descend/ascend, and Shift to fly faster. Explore world enables ground-level mouse look and WASD walking, with Shift for faster walking and Escape to return to free flight. Next viewpoint cycles cameras. The landing-page dark gradient is removed while exploring so the scene lighting remains visible. Tree and grass controls can force levels for inspection. The sun slider updates lighting; the moving-light checkbox animates a point light. Bake & cache world saves the current sun/volume configuration. Clear cache removes this application's stored bakes.
 
 ## World and vegetation
 
@@ -140,10 +140,10 @@ The footer reports merged versus visible far clusters. Detailed counts are avail
 
 Rendering uses one continuous requestAnimationFrame chain with no application 60 FPS cap. Hidden tabs cancel that chain; returning starts one chain and resets timing. Baking pauses reset the FPS window, avoiding misleading low readings that include time when no frames were rendered. The FPS tooltip reports callback interval and CPU submission time; neither is a measurement of panel refresh or GPU completion.
 
-Orbit damping is normalized by elapsed seconds against the original 60 Hz feel. Walking, wind and moving lights remain time based. `npm run test:frames` tests synthetic 60/180/90/60 Hz changes, pause/resume and damping equivalence, then records idle and pointer-motion browser timing in evidence/frame-timing.json. The headless browser test cannot verify the user's physical 180 Hz/DRR display. Windows/browser scheduling can change callback cadence during input; the page does not force the display refresh mode.
+Free-flight movement and scroll easing use elapsed seconds, with reusable camera scratch objects. Walking, wind and moving lights remain time based. `npm run test:frames` tests synthetic 60/180/90/60 Hz changes, pause/resume and damping equivalence, then records idle and pointer-motion browser timing in evidence/frame-timing.json. The headless browser test cannot verify the user's physical 180 Hz/DRR display. Windows/browser scheduling can change callback cadence during input; the page does not force the display refresh mode.
 
 
-Terrain uses FrontSide back-face culling, including outward-wound edge skirts. Orbit and walking cameras stay above both the source heightfield and the actual near-tile triangle surface, with 1.85 m clearance. Thin foliage remains double-sided deliberately. `npm run test:terrain-faces` verifies downward terrain hits, rejection from below, and recovery from an underground camera position.
+Terrain uses FrontSide back-face culling, including outward-wound edge skirts. Flying and walking cameras stay above both the source heightfield and the actual near-tile triangle surface, with 1.85 m clearance. Thin foliage remains double-sided deliberately. `npm run test:terrain-faces` verifies downward terrain hits, rejection from below, and recovery from an underground camera position.
 
 
 ## Direct GLSL/WGSL rendering and baking

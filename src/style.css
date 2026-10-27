@@ -299,6 +299,12 @@ footer > div {
 .exploring aside:hover {
   opacity: 1;
 }
+.immersive header,
+.immersive main,
+.immersive aside,
+.immersive footer {
+  display: none;
+}
 @media (max-width: 800px) {
   header {
     left: 20px;

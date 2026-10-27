@@ -61,7 +61,7 @@ import grassDataSource from "./grass-data.js?raw";
 import terrainMathSource from "./terrain-math.js?raw";
 import terrainSnapshotSource from "./terrain-snapshot.js?raw";
 import mergedDataSource from "./merged-data.js?raw";
-import { FrameClock, dampingAtDelta } from "./frame-clock.js";
+import { FrameClock } from "./frame-clock.js";
 import {
   updateMergedVisibility,
   mergedStats,
@@ -70,7 +70,7 @@ import {
 } from "./merged-visibility.js";
 import mergedSource from "./merged-visibility.js?raw";
 import * as T from "three/webgpu";
-import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+import { FlyControls } from "./fly-controls.js";
 import { SkyMesh as Sky } from "three/addons/objects/SkyMesh.js";
 import "./style.css";
 import vegetationSource from "./vegetation.js?raw";
@@ -225,7 +225,7 @@ camera.position.set(19, height(19, 43) + 4.2, 43);
 const composer = createAtmosphere(renderer, scene, camera, lightUniforms);
 diagnostics.antialiasing = { smaa: false, samples: 4 };
 renderer.info.autoReset = false;
-const controls = new OrbitControls(camera, renderer.domElement);
+const controls = new FlyControls(camera, renderer.domElement);
 controls.target.set(-8, height(-8, -23) + 5, -23);
 if (new URLSearchParams(location.search).get("view") === "river") {
   camera.position.set(
@@ -235,11 +235,7 @@ if (new URLSearchParams(location.search).get("view") === "river") {
   );
   controls.target.set(riverCenter(-24), riverLevel(-24) + 0.3, -24);
 }
-controls.enableDamping = true;
-controls.dampingFactor = 0.045;
-controls.maxPolarAngle = Math.PI - 0.02;
-controls.minDistance = 2;
-controls.maxDistance = 1000;
+controls.lookAtTarget();
 const sun = new VoxelSun(0xffe6be, 2.6),
   ambient = new T.HemisphereLight(0xc9dded, 0x666546, 0.85);
 sun.castShadow = true;
@@ -343,8 +339,7 @@ $("lookSun").onclick = () => {
   controls.target
     .copy(p)
     .addScaledVector(sunDirection, sunDirection.y > 0 ? 100 : -100);
-  camera.lookAt(controls.target);
-  controls.update();
+  controls.lookAtTarget();
 };
 $("dayCycle").onchange = (e) => {
   cycleRunning = e.target.checked;
@@ -449,40 +444,54 @@ const keys = new Set();
 let walking = false,
   yaw = 0,
   pitch = 0;
-function resumeOrbit(keepExploring = false) {
+function resumeFly(keepExploring = false) {
   walking = false;
   document.body.classList.toggle("exploring", keepExploring);
   controls.enabled = true;
-  controls.target
-    .copy(camera.position)
-    .addScaledVector(camera.getWorldDirection(new T.Vector3()), 15);
+  keys.clear();
+  $("hint").textContent =
+    "Drag to look · Scroll to travel · Fly: WASD + Q/E · Shift faster · Esc to show controls";
 }
-$("explore").onclick = async () => {
-  walking = true;
+async function enterCameraMode(walk) {
+  walking = walk;
   document.body.classList.add("exploring");
-  controls.enabled = false;
+  controls.enabled = !walk;
+  keys.clear();
+  $("hint").textContent = walk
+    ? "Walk · Mouse to look · WASD move · Shift faster · T torch · Esc to show controls"
+    : "Fly · Mouse to look · WASD move · Q/E down/up · Shift faster · Esc to show controls";
   const d = camera.getWorldDirection(new T.Vector3());
   yaw = Math.atan2(-d.x, -d.z);
   pitch = Math.asin(d.y);
   // Mouse capture can be denied in embedded previews or an inactive tab.
   // Keep the loaded world usable with drag/scroll controls in that case.
-  if (!renderer.domElement.requestPointerLock) return resumeOrbit(true);
+  if (!renderer.domElement.requestPointerLock) return resumeFly();
   try {
+    renderer.domElement.tabIndex = -1;
+    renderer.domElement.focus({ preventScroll: true });
     await renderer.domElement.requestPointerLock();
   } catch {
-    resumeOrbit(true);
+    resumeFly();
   }
-};
-document.addEventListener("pointerlockerror", () => resumeOrbit(true));
+}
+$("explore").onclick = () => enterCameraMode(true);
+$("fly").onclick = () => enterCameraMode(false);
+document.addEventListener("pointerlockerror", () => resumeFly());
 document.addEventListener("pointerlockchange", () => {
-  if (document.pointerLockElement !== renderer.domElement) {
-    resumeOrbit();
+  const captured = document.pointerLockElement === renderer.domElement;
+  document.body.classList.toggle("immersive", captured);
+  if (!captured) {
+    resumeFly();
   }
 });
 document.addEventListener("mousemove", (e) => {
   if (document.pointerLockElement === renderer.domElement) {
-    yaw -= e.movementX * 0.002;
-    pitch = T.MathUtils.clamp(pitch - e.movementY * 0.002, -1.4, 1.4);
+    if (walking) {
+      yaw -= e.movementX * 0.002;
+      pitch = T.MathUtils.clamp(pitch - e.movementY * 0.002, -1.4, 1.4);
+    } else {
+      controls.look(e.movementX, e.movementY);
+    }
   }
 });
 window.addEventListener("keydown", (e) => {
@@ -493,7 +502,9 @@ window.addEventListener("keydown", (e) => {
     lightDirty = true;
   }
   keys.add(e.code);
-  if (["KeyW", "KeyA", "KeyS", "KeyD", "Space"].includes(e.code))
+  if (
+    ["KeyW", "KeyA", "KeyS", "KeyD", "KeyQ", "KeyE", "Space"].includes(e.code)
+  )
     e.preventDefault();
 });
 window.addEventListener("keyup", (e) => keys.delete(e.code));
@@ -530,7 +541,7 @@ $("view").onclick = () => {
   const [p, t] = views[viewpoint];
   camera.position.set(p[0], height(p[0], p[2]) + p[1], p[2]);
   controls.target.set(t[0], height(t[0], t[2]) + t[1], t[2]);
-  controls.update();
+  controls.lookAtTarget();
 };
 $("sun").oninput = () => {
   $("sunValue").textContent = $("sun").value + "°";
@@ -999,10 +1010,9 @@ function animate(now) {
     );
     camera.position.y = height(camera.position.x, camera.position.z) + 1.85;
   } else {
-    controls.dampingFactor = dampingAtDelta(0.045, dt);
-    controls.update(dt);
+    controls.update(dt, keys);
   }
-  // Orbit and scroll must obey the same ground clearance as walking.
+  // Free flight stays above terrain and inside the generated world.
   camera.position.x = T.MathUtils.clamp(
     camera.position.x,
     -TERRAIN_SIZE / 2 + 20,
@@ -1015,9 +1025,7 @@ function animate(now) {
   );
   const floor = terrainCameraFloor(camera.position.x, camera.position.z);
   if (camera.position.y < floor) {
-    const lift = floor - camera.position.y;
     camera.position.y = floor;
-    if (!walking) controls.target.y += lift;
   }
   sky.position.copy(camera.position);
   sky.updateMatrixWorld();
@@ -1393,7 +1401,6 @@ async function start() {
   baking = true;
   diagnostics.baking = true;
   progress("Preparing scene shaders", 0.98);
-  controls.update();
   const prepareGroup = clusters.prepareGroup;
   clusters.prepareGroup = null;
   updateLOD(clusters, camera, forcedTree, [85, 190, 420], scene);
