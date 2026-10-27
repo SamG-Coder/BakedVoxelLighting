@@ -1,3 +1,6 @@
+import { WalkCollision } from "./walk-collision.js";
+import { updateWalkEffects, walkEffectStats } from "./walk-effects.js";
+import { sampleHydrology } from "./watershed.js";
 import { installGameMenu } from "./game-menu.js";
 import terrainGenerationSource from "./terrain-generation.js?raw";
 import watershedSource from "./watershed.js?raw";
@@ -495,6 +498,9 @@ function cacheLabel() {
       : "Memory only";
 }
 const keys = new Set();
+let walkCollision;
+const walkWater = {};
+diagnostics.walkInteraction = walkEffectStats;
 let walking = false,
   cameraModeActive = false,
   fallbackMouse = false,
@@ -1120,6 +1126,8 @@ function animate(now) {
   sunDisc.position.copy(camera.position).addScaledVector(sunDirection, 3000);
   sunDisc.updateMatrixWorld();
   if (walking) {
+    const beforeX = camera.position.x,
+      beforeZ = camera.position.z;
     camera.rotation.order = "YXZ";
     camera.rotation.set(pitch, yaw, 0);
     const speed = (keys.has("ShiftLeft") ? 22 : 6) * dt,
@@ -1139,7 +1147,17 @@ function animate(now) {
       -TERRAIN_SIZE / 2 + 20,
       TERRAIN_SIZE / 2 - 20,
     );
+    const collision = walkCollision.move(
+      beforeX,
+      beforeZ,
+      camera.position.x,
+      camera.position.z,
+      camera.position.y - 1.85,
+    );
+    camera.position.x = collision.x;
+    camera.position.z = collision.z;
     camera.position.y = height(camera.position.x, camera.position.z) + 1.85;
+    walkEffectStats.collisionChecks = walkCollision.checks;
   } else {
     controls.update(dt, keys);
   }
@@ -1158,6 +1176,23 @@ function animate(now) {
   if (camera.position.y < floor) {
     camera.position.y = floor;
   }
+  const feetY = height(camera.position.x, camera.position.z);
+  if (walking) sampleHydrology(camera.position.x, camera.position.z, walkWater);
+  const wet =
+    walking &&
+    walkWater.segment >= 0 &&
+    walkWater.distance < walkWater.width &&
+    feetY < walkWater.level - 0.025 &&
+    camera.position.y > walkWater.level;
+  updateWalkEffects(
+    walking,
+    camera.position.x,
+    feetY,
+    camera.position.z,
+    now / 1000,
+    wet,
+    walkWater.level || 0,
+  );
   sky.position.copy(camera.position);
   ambience.update(now, worldHour);
   sky.updateMatrixWorld();
@@ -1429,6 +1464,7 @@ async function start() {
       catalogSource,
   );
   clusters = await buildTrees(world, assets, geometryIdentity, progress);
+  walkCollision = new WalkCollision(world.trees, clusters.prototypes);
   grass = buildGrass(assets);
   clusters.prepareGroup = (group, priority = () => 1000) => {
     if (group.userData.pipelineReady) return Promise.resolve();

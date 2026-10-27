@@ -1,3 +1,4 @@
+import { waterContactOffset } from "./walk-effects.js";
 import * as T from "three/webgpu";
 import * as N from "three/tsl";
 import { needsMotionVectors } from "./motion-pass.js";
@@ -84,7 +85,10 @@ export function createRiverMaterial(U) {
     time,
     distanceToEye: N.cameraPosition.sub(N.positionWorld).length(),
   });
-  const normal = surface.xyz;
+  const contact = waterContactOffset(N.positionWorld, time);
+  const normal = surface.xyz
+    .add(N.vec3(contact.x.negate(), 0, contact.z.negate()))
+    .normalize();
   const depth = N.max(flow.w, 0);
   const foam = surface.w;
   const displacement = {
@@ -95,11 +99,19 @@ export function createRiverMaterial(U) {
     time,
   };
   material.positionNode = N.Fn((builder) => {
+    const world = N.modelWorldMatrix.mul(N.vec4(N.positionLocal, 1)).xyz;
+    const offset = (t, previous = false) =>
+      N.vec3(0, waterContactOffset(world, t, previous).y, 0).mul(
+        N.smoothstep(0, 0.12, depth),
+      );
     if (needsMotionVectors(builder))
       N.positionPrevious.assign(
-        riverDisplacement({ ...displacement, time: ref(U, "previousTime") }),
+        riverDisplacement({
+          ...displacement,
+          time: ref(U, "previousTime"),
+        }).add(offset(ref(U, "previousTime"), true)),
       );
-    return riverDisplacement(displacement);
+    return riverDisplacement(displacement).add(offset(time));
   })();
   material.normalNode = N.cameraViewMatrix
     .mul(N.vec4(normal, 0))

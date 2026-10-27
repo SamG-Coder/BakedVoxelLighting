@@ -1,3 +1,4 @@
+import { grassContactOffset } from "./walk-effects.js";
 import { GRASS_MIXES } from "./plant-catalog.js";
 import { worldHabitat, worldSunVisibility } from "./world-light.js";
 import { cloudAt, CLOUD_SHADOW_STRENGTH } from "./clouds.js";
@@ -260,11 +261,18 @@ function createDecorated(original, options, U, grid) {
         v: N.uv().y,
         strength: N.float(wind),
       };
+      const matrix = N.modelWorldMatrix.mul(instanceMatrix());
+      const contact = (time, previous = false) =>
+        grass && !surfacePayload
+          ? grassContactOffset(anchor, matrix, N.uv().y, time, previous)
+          : N.vec3(0);
       if (needsMotionVectors(builder))
         N.positionPrevious.assign(
-          K.windPosition({ ...inputs, t: ref(U, "previousTime") }),
+          K.windPosition({ ...inputs, t: ref(U, "previousTime") }).add(
+            contact(ref(U, "previousTime"), true),
+          ),
         );
-      return K.windPosition(inputs);
+      return K.windPosition(inputs).add(contact(ref(U, "time")));
     })();
   if (roots && !wind)
     m.positionNode = N.Fn((builder) => {
