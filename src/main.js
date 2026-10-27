@@ -169,7 +169,10 @@ const profileRendering =
   import.meta.env.DEV && new URLSearchParams(location.search).has("profile");
 // Restore the pre-regression default. Temporal reconstruction remains an
 // explicit experiment until its extra full-scene motion work earns its cost.
-const temporalAA = new URLSearchParams(location.search).get("aa") === "taau";
+const requestedAA = new URLSearchParams(location.search).get("aa");
+const aaMode =
+  requestedAA === "taa" || requestedAA === "taau" ? requestedAA : "msaa";
+const temporalAA = aaMode !== "msaa";
 const renderer = new T.WebGPURenderer({
   forceWebGL: backendChoice === "webgl2",
   samples: temporalAA ? 0 : 4,
@@ -211,6 +214,12 @@ document.getElementById("backend").onchange = (event) => {
   location.assign(url);
 };
 renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5));
+$("antialiasing").value = aaMode;
+$("antialiasing").onchange = (event) => {
+  const url = new URL(location.href);
+  url.searchParams.set("aa", event.target.value);
+  location.assign(url);
+};
 renderer.setSize(innerWidth, innerHeight);
 renderer.toneMapping = T.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.05;
@@ -239,7 +248,7 @@ camera.position.set(19, height(19, 43) + 4.2, 43);
 // Hardware multisampling is shared by both backends; no legacy WebGL composer.
 let composer;
 diagnostics.antialiasing = {
-  mode: temporalAA ? "temporal-native" : "msaa",
+  mode: aaMode,
   samples: temporalAA ? 0 : 4,
 };
 renderer.info.autoReset = false;
@@ -280,7 +289,7 @@ composer = createAtmosphere(
   camera,
   lightUniforms,
   sun,
-  temporalAA,
+  aaMode,
 );
 const lamp = new T.PointLight(0xff8b32, 0, 55, 2);
 lamp.position.set(6, height(6, 5) + 3, 5);

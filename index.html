@@ -39,6 +39,8 @@
       <div class="progress"><div id="progress"></div></div>
       <label>Graphics backend<select id="backend"><option value="webgpu">WebGPU · WGSL</option><option value="webgl2">WebGL2 · GLSL</option></select></label>
       <p id="backendNote" class="note">Switching backend reloads the world; baked data stays cached.</p>
+      <label>Anti-aliasing<select id="antialiasing"><option value="msaa">MSAA 4× · default</option><option value="taa">Temporal AA · preview</option><option value="taau">TAAU · comparison</option></select></label>
+      <p class="note">Changing anti-aliasing reloads the world. Baked data stays cached.</p>
       <div class="stats">
         <div><small>LIGHT VOLUME</small><strong id="volume">—</strong></div>
         <div>

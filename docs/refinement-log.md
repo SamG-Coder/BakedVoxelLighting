@@ -2,6 +2,18 @@
 
 This is a working good/bad list, updated from rendered checks and measurements. A stationary 60 FPS reading is not an acceptance test for streaming. Target: natural appearance at the existing quality settings with smooth 60 FPS traversal.
 
+## 2026-10-28: native temporal-AA preview
+
+Performance correction 74cf149 was committed, pushed, and its Pages deployment succeeded before continuing AA work. MSAA remains the default. A selector now exposes the native `?aa=taa` preview and retains `?aa=taau` for comparison.
+
+The native path uses Three 0.186.1 TRAA rather than its upscaling-oriented TAAU resolve. A version-pinned postinstall patch alternates the two retained colour targets instead of copying resolved colour into history each frame. Depth retains one stable owner and still copies once per frame. The patch removes the temporary camera-view-offset object, adds explicit history reset/validity, and supports the existing reactive mask with a 0.15 minimum current-frame weight. Upstream depth reprojection, neighborhood variance clipping and luminance weighting remain. The patch is reproducible from a clean npm install and fails on unsupported Three versions.
+
+Native TAA resolves scene colour directly, then applies half-resolution contact shading and low-resolution scattering in the final composite. This removes the full-resolution RGBA16F intermediate composite and its render pass. Scattering uses deterministic samples because it is composited after the temporal resolve; it must not inject unresolved per-frame noise. Resize, abrupt camera displacement/rotation, projection-FOV changes and large sun-direction changes reject history. The unjittered projection remains bound between asynchronous shader builds, and the final canvas alpha remains opaque.
+
+The 200-frame local history test checks target reuse, previous-frame identity, no read/write alias, stable depth ownership, seed/reset behavior, jitter and disposal. A real WebGPU camera sweep rendered 455 frames with zero colour-history copies and 455 depth copies; resize and night/day changes produced no captured GPU validation errors. WebGL2 also loaded and completed resize/motion checks (180 sweep frames, zero colour-history copies, 180 depth copies) without captured errors; its observed roughly 24 FPS is compatibility evidence, not a performance success. The selector reload back to MSAA was exercised. These short checks do not certify absence of ghosting for all vegetation or streaming transitions.
+
+At the matched 1280x800/noon starting view, after the performance correction: TAAU measured 58.2 FPS; the first native implementation measured 56.2; removing the intermediate pass measured 57.7. The final native sample had 16.8ms p95, 33.4ms p99 and 49.9ms maximum interval. Average render-pass count fell from 7.68 to 6.66 (background bakes/reflections make it fractional), at approximately 2,210 draw calls. This establishes a pass/history-bandwidth reduction, not a clear FPS improvement over corrected TAAU. MSAA remains the recommended default and neither temporal mode is claimed to sustain 60 FPS. Evidence: `evidence/aa-taau-corrected.json`, `aa-native-first.json`, `aa-native-final.json`, `aa-motion-webgpu.json`.
+
 ## 2026-10-28: rendering regression correction
 
 Compared c16938d with its parent after the user reported a slowdown. Restored 4x MSAA as the default; `?aa=taau` explicitly selects the experimental temporal/contact-shadow path. The opaque final composite and the distant grass colour fix remain in both modes.

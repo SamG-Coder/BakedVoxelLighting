@@ -1,6 +1,7 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { resolve } from "node:path";
+import { patchTRAA } from "./patch-three-temporal.mjs";
 
 // Reproducible, version-pinned changes to the runtime bundle used by both
 // WebGPU and forceWebGL. No shader equations, bindings or update rates change.
@@ -139,8 +140,13 @@ async function main() {
   const source = await readFile(path, "utf8");
   const result = patchRuntime(source);
   if (result !== source) await writeFile(path, result);
+  const temporalPath = new URL("examples/jsm/tsl/display/TRAANode.js", root);
+  const temporalSource = await readFile(temporalPath, "utf8");
+  const temporalResult = patchTRAA(temporalSource);
+  if (temporalResult !== temporalSource)
+    await writeFile(temporalPath, temporalResult);
   console.log(
-    "Three 0.186.1: allocation patches and asynchronous shader budget hook installed.",
+    "Three 0.186.1: allocation, shader budget and native temporal history patches installed.",
   );
 }
 if (
