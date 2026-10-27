@@ -121,7 +121,7 @@ function plantMaterials(assets, species, shrub = false) {
             ? 0xc6b09b
             : 0xe2d8c6,
     }),
-    { moss: true },
+    { moss: true, roots: !shrub },
   );
   const leaf = decorate(
     new T.MeshStandardMaterial({
@@ -135,7 +135,7 @@ function plantMaterials(assets, species, shrub = false) {
       color: 0xf4f5ec,
       vertexColors: true,
     }),
-    { wind: shrub ? 0.018 : 0.028 },
+    { wind: shrub ? 0.018 : 0.028, roots: !shrub },
   );
   cache.set(key, [wood, leaf]);
   return [wood, leaf].map((m) => fadeMaterial(m.clone()));

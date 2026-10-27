@@ -58,3 +58,16 @@ Validation:
 ## Iteration rule
 
 Choose one item, record a before result, implement it, compare the same view/route and retain it only if its intended improvement is supported. Keep quality settings unchanged. Record remaining regressions instead of claiming the global 60 FPS goal from a local success.
+
+## Selected improvement: roots on uneven terrain
+
+Downhill buttresses exposed the prototype's flat lower surface as vertical slabs. Placed trees now sample the existing terrain height field at root vertices, bend exposed downhill wood into the slope, and smoothly return to the unchanged trunk above the two-metre prototype collar. Uphill wood remains embedded. The inverse-transpose of the deformation adjusts geometric normals; existing bark normal maps remain active. Low leaves within the collar receive the same displacement before wind, keeping sapling attachments consistent.
+
+- Uses the existing instanced geometry and existing terrain texture: no per-tree geometry generation, additional draw, texture allocation or per-frame CPU work.
+- Four height texel loads only for vertices below the collar. This adds bounded vertex shader work; a complete traversal performance comparison has not been performed for this change.
+- Applies to wood levels L0, L1 and L2. Prototype capture remains undeformed; the most distant L3 whole-tree impostor is still a flat-ground approximation, not a terrain-specific root bake.
+- Manual browser fixture: `/scripts/root-slope.html?backend=webgpu` or `?backend=webgl2` on the Vite dev server. Toggle fitting to reproduce the exposed slab; switch wood LOD and transform the instance to check attachment.
+- WebGPU L0/L1/L2 and WebGL2 L0 rendered successfully. The WebGPU production woodland reached ready and a sloped-tree view rendered with no captured errors. The Pages build and whitespace checks passed.
+- Local evidence: `evidence/root-slope-before.png`, `evidence/root-slope-after.png`, `evidence/root-world-after.png`.
+
+Remaining landscape issues: river strip overlaps and deliberate road crossings, distant lighting consistency, and sparse landmark torch placement still require their own completed validation. This root fix does not resolve those items.

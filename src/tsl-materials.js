@@ -5,6 +5,7 @@ import * as T from "three/webgpu";
 import * as N from "three/tsl";
 import { ref, texRef, terrainNode } from "./tsl-baking.js";
 import { attributeInstanceMatrix } from "./attribute-instances.js";
+import { rootConformPosition } from "./root-conform.js";
 const matrices = new WeakMap();
 const instanceMatrix = N.Fn((builder) => {
   if (builder.object.isAttributeInstances) return attributeInstanceMatrix();
@@ -145,6 +146,7 @@ function createDecorated(original, options, U, grid) {
     grass = false,
     grassAtlas = 0,
     moss = false,
+    roots = false,
   } = options;
   const m = new T.MeshStandardNodeMaterial();
   // Copy standard properties without copying GLSL hooks or changing NodeMaterial's type.
@@ -176,6 +178,9 @@ function createDecorated(original, options, U, grid) {
   }
   m.userData.shading = { wind, ground, transmission, grass };
   m.userData.grassAtlas = grassAtlas;
+  const fittedPosition = roots
+    ? rootConformPosition(U.terrainField.value, grid, instanceMatrix)
+    : N.positionLocal;
   if (wind)
     m.positionNode = N.Fn((builder) => {
       const id =
@@ -187,7 +192,7 @@ function createDecorated(original, options, U, grid) {
           ? N.modelWorldMatrix.mul(instanceMatrix().element(3)).xyz
           : N.modelWorldMatrix.element(3).xyz;
       return K.windPosition({
-        p: N.positionLocal,
+        p: fittedPosition,
         t: ref(U, "time"),
         id,
         anchor,
@@ -196,6 +201,7 @@ function createDecorated(original, options, U, grid) {
         strength: N.float(wind),
       });
     })();
+  if (roots && !wind) m.positionNode = fittedPosition;
   if (moss) {
     m.colorNode = K.mossSurface({
       bark: N.materialColor,
