@@ -225,14 +225,14 @@ function createDecorated(original, options, U, grid) {
       // the fine ground detail underneath it to stay within 16 GPU samplers.
       dry = lush.mul(N.vec3(1.12, 0.94, 0.78));
 
-    const root = texRef(U, "rootField").sample(
+    const groundInfluence = texRef(U, "rootField").sample(
       p.xz
         .add(2000)
         .div(4000)
         .mul(grid - 1)
         .add(0.5)
         .div(grid),
-    ).r;
+    );
     const stone = texRef(U, "rockMap")
       .sample(guv.mul(0.5))
       .setUpdateMatrix(false).rgb;
@@ -283,7 +283,8 @@ function createDecorated(original, options, U, grid) {
       lush,
       dry,
       stone,
-      root,
+      root: groundInfluence.r,
+      bank: groundInfluence.ba,
       cover,
       surface,
       mean,

@@ -8,6 +8,7 @@ self.onmessage = () => {
       result.moisture.buffer,
       result.slopes.buffer,
       result.roadVerge.buffer,
+      result.groundInfluence.buffer,
     ]);
   } catch (error) {
     self.postMessage({ error: error.message });

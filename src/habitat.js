@@ -1,4 +1,5 @@
 import { GRASS_TYPES, GRASS_MIXES } from "./plant-catalog.js";
+import { bankExposure } from "./riverbank.js";
 export const smooth = (a, b, x) => {
   const t = Math.max(0, Math.min(1, (x - a) / (b - a)));
   return t * t * (3 - 2 * t);
@@ -103,7 +104,9 @@ export function grassHabitat(x, z, land) {
     dry,
     shade,
     density:
-      Math.min(1, 0.52 + fine * 0.35 + moisture * 0.16) * (1 - woodland * 0.91),
+      Math.min(1, 0.52 + fine * 0.35 + moisture * 0.16) *
+      (1 - woodland * 0.91) *
+      (1 - bankExposure(x, z, land.riverDistance ?? 100) * 0.97),
     height: (0.78 + broad * 0.63) * (1 - short * 0.34) * (1 - woodland * 0.46),
     tint,
     colour: [

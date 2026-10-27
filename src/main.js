@@ -1,6 +1,7 @@
 import terrainGenerationSource from "./terrain-generation.js?raw";
 import watershedSource from "./watershed.js?raw";
 import terrainNoiseSource from "./terrain-noise.js?raw";
+import riverbankSource from "./riverbank.js?raw";
 import { createNightWorld } from "./night-world.js";
 import { buildDeadwood } from "./deadwood.js";
 import deadwoodSource from "./deadwood-data.js?raw";
@@ -916,6 +917,7 @@ async function loadAssets() {
       terrainMathSource +
       watershedSource +
       terrainNoiseSource +
+      riverbankSource +
       terrainGenerationSource +
       terrainSnapshotSource +
       vegetationSource +
@@ -947,6 +949,7 @@ async function loadAssets() {
       terrainMathSource +
       watershedSource +
       terrainNoiseSource +
+      riverbankSource +
       terrainGenerationSource +
       terrainSnapshotSource +
       impostorSource +
@@ -1414,6 +1417,7 @@ async function start() {
       surfaceIdentity +
       watershedSource +
       terrainNoiseSource +
+      riverbankSource +
       JSON.stringify([world.trees, world.deadwood]),
   );
   await bake();

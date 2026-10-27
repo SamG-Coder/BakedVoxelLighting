@@ -16,6 +16,7 @@ import {
   TERRAIN_SIZE,
   rootInfluence,
   canopyInfluence,
+  groundInfluence,
   terrainPixels,
   terrainSample,
   TERRAIN_GRID,
@@ -29,14 +30,14 @@ export const terrainTexture = new T.DataTexture(
   T.FloatType,
 );
 terrainTexture.needsUpdate = true;
-// R: root wear, G: persistent canopy shelter. Two UNORM channels keep this
-// smaller than the old single float channel and reuse one terrain binding.
-const rootCanopyPixels = new Uint8Array(TERRAIN_GRID * TERRAIN_GRID * 2);
+// R: root wear, G: canopy shelter, B: bank exposure, A: gravel fraction.
+// Reuse the worker's transferred buffer, with no staging copy or new binding.
+const rootCanopyPixels = groundInfluence;
 const rootTexture = new T.DataTexture(
   rootCanopyPixels,
   TERRAIN_GRID,
   TERRAIN_GRID,
-  T.RGFormat,
+  T.RGBAFormat,
   T.UnsignedByteType,
 );
 rootTexture.minFilter = rootTexture.magFilter = T.LinearFilter;
@@ -532,10 +533,10 @@ export function voxelProbe(position) {
 // Persistent habitat data, independent of the current sun or streamed light volume.
 export function bakeMossEnvironment() {
   for (let i = 0; i < rootInfluence.length; i++) {
-    rootCanopyPixels[i * 2] = Math.round(
+    rootCanopyPixels[i * 4] = Math.round(
       Math.max(0, Math.min(1, rootInfluence[i])) * 255,
     );
-    rootCanopyPixels[i * 2 + 1] = Math.round(
+    rootCanopyPixels[i * 4 + 1] = Math.round(
       Math.max(0, Math.min(1, canopyInfluence[i])) * 255,
     );
   }

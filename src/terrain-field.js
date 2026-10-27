@@ -42,9 +42,11 @@ const {
   moisture,
   slopes,
   roadVerge,
+  groundInfluence,
   routes: generatedRoutes,
   terrainStats: generatedStats,
 } = await loadTerrain();
+export { groundInfluence };
 export const routes = generatedRoutes;
 export const terrainStats = generatedStats;
 export const canopyInfluence = new Float32Array(N * N);

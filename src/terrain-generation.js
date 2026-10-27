@@ -5,6 +5,7 @@ import {
   regionalHeight,
   sampleHydrology,
 } from "./terrain-math.js";
+import { bankExposure, bankGravel } from "./riverbank.js";
 export function generateTerrain() {
   const N = 2001,
     CELL = TERRAIN_SIZE / (N - 1);
@@ -22,7 +23,10 @@ export function generateTerrain() {
     drainage = new Float32Array(N * N),
     traffic = new Float32Array(N * N),
     moisture = new Float32Array(N * N),
-    slopes = new Float32Array(N * N);
+    slopes = new Float32Array(N * N),
+    // R/G are populated with root wear/canopy after tree placement. B/A hold
+    // bank exposure/gravel; transfer this buffer directly to the GPU texture.
+    groundInfluence = new Uint8Array(N * N * 4);
   for (let z = 0; z < N; z++)
     for (let x = 0; x < N; x++) {
       const wx = x * CELL - TERRAIN_SIZE / 2,
@@ -136,6 +140,11 @@ export function generateTerrain() {
       const h = sampleHydrology(wx, wz, hydrology),
         i = z * N + x;
       if (h.distance > h.width + 30) continue;
+      const bank = bankExposure(wx, wz, h.distance - h.width + 8);
+      if (bank > 0) {
+        groundInfluence[i * 4 + 2] = Math.round(bank * 255);
+        groundInfluence[i * 4 + 3] = Math.round(bankGravel(wx, wz) * 255);
+      }
       const bedDepth = 0.55 + h.width * 0.14;
       const cross = h.distance / Math.max(1, h.width);
       const channel = h.level - bedDepth + bedDepth * Math.pow(cross, 2.4);
@@ -339,6 +348,7 @@ export function generateTerrain() {
     moisture,
     slopes,
     roadVerge,
+    groundInfluence,
     routes,
     terrainStats,
   };

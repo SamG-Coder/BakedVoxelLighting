@@ -23,6 +23,7 @@ The full-resolution erosion and path pass runs in `terrain-generation-worker.js`
 - Shaded forest-floor bakes use generated leaf litter. Exposed slope texture uses generated scree; existing boulder material stays separate.
 - The plant atlas now uses a 4-column grid. Each plant retains 1024 x 1024 pixels; the ten-species atlas is 4096 x 3072. Species are filtered separately before folding the mip levels, preventing cross-species colour bleed.
 - Existing browser normal-map derivation, coverage-preserving mipmaps, grass patch impostors, far ground-cover bakes and voxel material profiles consume the new sources. Derived normals are luminance approximations, not scanned surface geometry.
+- Riverbank exposure and gravel patches are baked into the existing ground influence texture. The same exposure function suppresses near, middle and distant grass, and the ground shader retains the soil/gravel margin beyond geometry distance. Inland populations are unchanged.
 - New generator, material and plant revisions invalidate incompatible cached bakes automatically.
 
 ## Deterministic seed measurements
@@ -37,6 +38,7 @@ Run locally:
 
 - `node scripts/verify-watershed.mjs`
 - `node scripts/verify-river.mjs`
+- `node scripts/verify-riverbanks.mjs`
 - `node scripts/landscape-data.mjs`
 - `node scripts/verify-habitats.mjs`
 - `node scripts/verify-plant-grid.mjs`
