@@ -2,6 +2,16 @@
 
 This is a working good/bad list, updated from rendered checks and measurements. A stationary 60 FPS reading is not an acceptance test for streaming. Target: natural appearance at the existing quality settings with smooth 60 FPS traversal.
 
+## 2026-10-28: foliage and temporal rendering
+
+- Baked a transmission approximation into existing normal-map alpha. Source mips, packed grass, tree HLODs and meadow surfaces preserve it separately from cutout coverage. This is inferred from occupancy/pigment, not a measured leaf thickness scan.
+- Added native-resolution temporal reconstruction, previous-frame vegetation/water positions, conservative solid-surface contact shadows and cloud-modulated single scattering. `?aa=msaa` retains the 4-sample reference path.
+- Fixed asynchronous compilation retaining the wrong MRT context; terrain now reuses its meadow atlas binding to stay within the baseline 16 sampled-texture limit.
+- Kept the unjittered motion projection bound between frames and stopped mixing jittered source pixels back into reconstructed output. User confirmed distant shaking was resolved.
+- Made the final world composite opaque: foliage coverage alpha must not expose the HTML background after temporal filtering. User confirmed the distant grey-grass correction.
+- A cached 2.25 MiB eight-direction world horizon atlas supplies distant terrain/canopy visibility. It is coarse directional coverage, not full-world fine GI or a replacement for local voxel shadows.
+- Production build and the local async-context/material-mip regression checks pass. WebGPU preview reached ready without captured validation errors. WebGL2 temporal parity and a long traversal performance comparison remain to be completed; observed frame rates varied by view, so this is not a locked-60-FPS claim. No tests were added to Actions.
+
 ## Good
 
 - Connected downhill drainage replaces the former single sinusoidal river.

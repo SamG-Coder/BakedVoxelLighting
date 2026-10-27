@@ -3,6 +3,25 @@ import { PreparationQueue } from "./preparation-queue.js";
 // GPU objects belong to this renderer. Serialize their preparation, outside animate().
 // compileAsync still runs JS on the main thread; it yields between shader stages.
 const queues = new WeakMap();
+// Async compilation yields while the presentation pass changes renderer state.
+// Node builders must retain the target/MRT that owns their render context.
+export function installCompilationContext(renderer) {
+  const previous = renderer.debug.onNodeBuilderCreated;
+  renderer.debug.onNodeBuilderCreated = (builder, object) => {
+    previous?.(builder, object);
+    const context = object.context;
+    if (!context) return;
+    const target = context.renderTarget,
+      mrt = context.mrt;
+    const view = Object.create(renderer);
+    view.getRenderTarget = () => target;
+    view.getMRT = () => mrt;
+    Object.defineProperty(view, "currentSamples", {
+      value: context.sampleCount,
+    });
+    builder.renderer = view;
+  };
+}
 export const rendererJobStats = {
   pending: 0,
   completed: 0,
@@ -88,6 +107,7 @@ export function prepareForRender(
       });
       object.visible = true;
       const previous = renderer.getRenderTarget(),
+        previousMRT = renderer.getMRT(),
         started = performance.now(),
         chargedBefore = shaderChargedMs;
       const sourceMaterial = object.material;
@@ -100,17 +120,21 @@ export function prepareForRender(
         // compileAsync captures the target and render list before its first await.
         // Restore immediately so frames can render while the pipeline is prepared.
         renderer.setRenderTarget(target);
+        renderer.setMRT(target?.worldMRT || null);
         if (substituteMaterial) object.material = substituteMaterial;
         // Three r186 compileAsync always asks for depth zero. The atmosphere's
         // nested scene/shadow renders use depths one/two, and their context IDs
         // are part of the shader cache key. Match that context during synchronous
         // render-list capture, then restore before yielding. No dependency edits.
         contexts.get = function (renderTarget, mrt, depth = callDepth) {
-          return getContext.call(this, renderTarget, mrt, depth);
+          const context = getContext.call(this, renderTarget, mrt, depth);
+          context.renderTarget = renderTarget;
+          return context;
         };
         compiling = renderer.compileAsync(object, camera, scene);
       } finally {
         renderer.setRenderTarget(previous);
+        renderer.setMRT(previousMRT);
         contexts.get = getContext;
         if (substituteMaterial) object.material = sourceMaterial;
         for (let i = 0; i < savedCount; i++) {

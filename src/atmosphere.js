@@ -3,13 +3,41 @@ import * as T from "three/webgpu";
 import * as N from "three/tsl";
 import { sampleVolume } from "./tsl-materials.js";
 import { ref } from "./tsl-baking.js";
+import { taau } from "three/addons/tsl/display/TAAUNode.js";
+import { sss } from "three/addons/tsl/display/SSSNode.js";
 
 // Half-resolution, depth-limited single scattering. Surface occlusion comes
 // from the same streamed radiance atlas used by the vegetation materials.
-export function createAtmosphere(renderer, scene, camera, U) {
+export function createAtmosphere(
+  renderer,
+  scene,
+  camera,
+  U,
+  sun,
+  temporal = true,
+) {
   const scenePass = N.pass(scene, camera);
   scenePass.renderTarget.samples = renderer.samples;
   scenePass.renderTarget.texture.type = renderer.getOutputBufferType();
+  // Keep the auxiliary buffer to one RGBA attachment: motion, contact receiver,
+  // reactive response. No additional full-scene geometry/depth prepass.
+  const motion = N.Fn((builder) => {
+    const s = builder.material.userData.shading || {};
+    const thin = s.grass || s.wind || s.transmission;
+    const contact = !thin && !s.water && builder.object.receiveShadow ? 1 : 0;
+    const reactive = s.water
+      ? 0.4
+      : thin
+        ? 0.12
+        : builder.material.transparent
+          ? 0.85
+          : 0;
+    return N.vec4(N.velocity, contact, reactive);
+  })();
+  if (temporal) {
+    scenePass.setMRT(N.mrt({ output: N.output, velocity: motion }));
+    scenePass.renderTarget.worldMRT = scenePass.getMRT();
+  }
   const colour = scenePass.getTextureNode();
   const depth = scenePass.getTextureNode("depth");
   const inverseProjection = N.uniform(camera.projectionMatrixInverse);
@@ -27,11 +55,17 @@ export function createAtmosphere(renderer, scene, camera, U) {
       .add(0.015);
     const sum = N.vec3(0).toVar();
     const opticalDepth = N.float(0).toVar();
-    const cloud = N.float(1).sub(
-      cloudAt(U, eye, sun).mul(CLOUD_SHADOW_STRENGTH),
-    );
+    const jitter = temporal
+      ? N.fract(
+          N.sin(
+            N.screenCoordinate.xy
+              .dot(N.vec2(12.9898, 78.233))
+              .add(N.floor(ref(U, "time").mul(60))),
+          ).mul(43758.5453),
+        )
+      : N.float(0.5);
     N.Loop(8, ({ i }) => {
-      const p = eye.add(ray.mul(length.mul(N.float(i).add(0.5).div(8))));
+      const p = eye.add(ray.mul(length.mul(N.float(i).add(jitter).div(8))));
       const local = p
         .sub(ref(U, "volumeMin", "vec3"))
         .div(ref(U, "volumeSize", "vec3"));
@@ -50,14 +84,19 @@ export function createAtmosphere(renderer, scene, camera, U) {
         inside,
       );
       const extinction = density.mul(length.div(8)).mul(0.00035);
-      opticalDepth.addAssign(extinction);
+      const transmittance = N.exp(opticalDepth.negate());
+      const cloud = N.float(1).sub(
+        cloudAt(U, p, sun).mul(CLOUD_SHADOW_STRENGTH),
+      );
       sum.addAssign(
         ref(U, "sunColour", "vec3")
           .mul(visibility)
-          .mul(extinction)
+          .mul(N.float(1).sub(N.exp(extinction.negate())))
+          .mul(transmittance)
           .mul(phase)
           .mul(cloud),
       );
+      opticalDepth.addAssign(extinction);
     });
     return N.vec4(
       sum.mul(ref(U, "bakedEnabled")).mul(ref(U, "daylight")),
@@ -68,14 +107,62 @@ export function createAtmosphere(renderer, scene, camera, U) {
     resolutionScale: 0.35,
     depthBuffer: false,
   });
-  const pipeline = new T.RenderPipeline(
-    renderer,
-    N.vec4(colour.rgb.mul(N.exp(light.a.negate())).add(light.rgb), colour.a),
+  let shaded = colour.rgb;
+  let contact;
+  const motionTexture = temporal ? scenePass.getTextureNode("velocity") : null;
+  if (temporal) {
+    contact = sss(depth, camera, sun);
+    contact.resolutionScale = 0.5;
+    contact.maxDistance.value = 0.45;
+    contact.thickness.value = 0.045;
+    contact.quality.value = 0.25;
+    contact.shadowIntensity.value = 1;
+    // Conservative contact correction only on solid receivers, never the
+    // grass/leaves' carrier faces. Existing voxel/raster shadows remain dominant.
+    shaded = shaded.mul(
+      N.mix(1, contact.r, motionTexture.z.mul(ref(U, "daylight")).mul(0.12)),
+    );
+  }
+  // Coverage alpha belongs to the foliage raster pass, not canvas opacity.
+  // The world includes an opaque sky; retaining cutout alpha here leaks the
+  // page background through dense mipmapped grass after temporal filtering.
+  const composed = N.vec4(
+    shaded.mul(N.exp(light.a.negate())).add(light.rgb),
+    1,
   );
+  let output = composed,
+    resolve;
+  if (temporal) {
+    const input = N.rtt(composed, null, null, {
+      type: T.HalfFloatType,
+      depthBuffer: false,
+    });
+    resolve = taau(input, depth, motionTexture, camera);
+    // Streaming compiles materials between frames. Keep the same unjittered
+    // projection bound during those builds as during presentation; otherwise
+    // VelocityNode bakes the jittered cameraProjectionMatrix into far HLODs.
+    resolve._originalProjectionMatrix.copy(camera.projectionMatrix);
+    N.velocity.setProjectionMatrix(resolve._originalProjectionMatrix);
+    const clearViewOffset = resolve.clearViewOffset.bind(resolve);
+    resolve.clearViewOffset = () => {
+      clearViewOffset();
+      N.velocity.setProjectionMatrix(resolve._originalProjectionMatrix);
+    };
+    // Native resolution, short history: retain fine blades and rapidly reject
+    // changing foliage / flames / water instead of smearing long trails.
+    resolve.currentFrameWeight = 0.15;
+    resolve.maxVelocityLength = 48;
+    // The raw input is jittered. Mixing it back after reconstruction makes
+    // sub-pixel leaves, tree silhouettes and the horizon shake every frame.
+    output = resolve;
+  }
+  const pipeline = new T.RenderPipeline(renderer, output);
   return {
     sceneTarget: scenePass.renderTarget,
     render: () => pipeline.render(),
     setSize: () => {},
     pipeline,
+    resolve,
+    contact,
   };
 }

@@ -1142,6 +1142,7 @@ async function bakeGrassSurface(renderer, cache, identity, assets) {
       h,
       views: GRASS_MIXES.length,
       cutoff: 0,
+      materialPayload: true,
     });
     record = {
       data,

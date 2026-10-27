@@ -22,6 +22,7 @@ self.onmessage = ({ data: { id, record, sources, tileSize } }) => {
             nx = 0,
             ny = 0,
             nz = 0,
+            response = 0,
             r = 0,
             g = 0,
             b = 0;
@@ -40,6 +41,7 @@ self.onmessage = ({ data: { id, record, sources, tileSize } }) => {
               nx += (source.normals[i] / 127.5 - 1) * a;
               ny += (source.normals[i + 1] / 127.5 - 1) * a;
               nz += (source.normals[i + 2] / 127.5 - 1) * a;
+              response += source.normals[i + 3] * a;
             }
           if (alpha) {
             data[o] = r / alpha;
@@ -50,7 +52,8 @@ self.onmessage = ({ data: { id, record, sources, tileSize } }) => {
             normals[o + 1] = ((ny / n) * 0.5 + 0.5) * 255;
             normals[o + 2] = ((nz / n) * 0.5 + 0.5) * 255;
           }
-          data[o + 3] = normals[o + 3] = alpha;
+          data[o + 3] = alpha;
+          normals[o + 3] = alpha ? response / alpha : 0;
         }
     }
     record = {
@@ -61,6 +64,7 @@ self.onmessage = ({ data: { id, record, sources, tileSize } }) => {
       views: sources.length,
       srgb: true,
       cutoff: 87,
+      materialPayload: true,
     };
   }
   const { w, h, views } = record,
@@ -136,7 +140,12 @@ self.onmessage = ({ data: { id, record, sources, tileSize } }) => {
             ns[out + 2] = ((nz / length) * 0.5 + 0.5) * 255;
           }
           data[out + 3] = a / 4;
-          ns[out + 3] = record.mossPayload ? (a ? payload / a : 0) : a / 4;
+          ns[out + 3] =
+            record.mossPayload || record.materialPayload
+              ? a
+                ? payload / a
+                : 0
+              : a / 4;
           nextWeights[out / 4] = a / 4;
         }
       // Preserve projected leaf coverage at the runtime alpha cutoff.
@@ -157,7 +166,7 @@ self.onmessage = ({ data: { id, record, sources, tileSize } }) => {
           for (let x = 0; x < frame; x++) {
             const i = (y * width + f * frame + x) * 4 + 3;
             data[i] = Math.min(255, data[i] * hi);
-            if (!record.mossPayload) ns[i] = data[i];
+            if (!record.mossPayload && !record.materialPayload) ns[i] = data[i];
           }
       }
     }

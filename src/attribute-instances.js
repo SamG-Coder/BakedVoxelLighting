@@ -12,6 +12,7 @@ export const attributeInstanceMatrix = () =>
 const setupInstances = N.Fn(() => {
   const matrix = attributeInstanceMatrix();
   N.positionLocal.assign(matrix.mul(N.positionLocal).xyz);
+  N.positionPrevious.assign(matrix.mul(N.positionPrevious).xyz);
   N.normalLocal.assign(N.transformNormal(N.normalLocal, matrix));
   N.instanceColor.assign(N.attribute("tileColour", "vec3"));
 }, "void");

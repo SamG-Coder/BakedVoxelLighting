@@ -11,6 +11,7 @@ import { sunShadowFilter } from "./sun-shadow-filter.js";
 import { getGPUUploads } from "./gpu-uploads.js";
 import {
   prepareForRender,
+  installCompilationContext,
   rendererJobStats,
   setPreparationPresenting,
 } from "./renderer-jobs.js";
@@ -40,6 +41,8 @@ import {
   CLOUD_SHADOW_STRENGTH,
 } from "./clouds.js";
 import { createAtmosphere } from "./atmosphere.js";
+import { prepareWorldLight } from "./world-light.js";
+import worldLightSource from "./world-light.js?raw";
 import * as N from "three/tsl";
 import cloudKernelSource from "./cloud-kernels.js?raw";
 import cloudDensityGLSL from "./shaders/cloud-density.glsl?raw";
@@ -164,15 +167,18 @@ const backendChoice =
   "webgpu";
 const profileRendering =
   import.meta.env.DEV && new URLSearchParams(location.search).has("profile");
+const temporalAA = new URLSearchParams(location.search).get("aa") !== "msaa";
 const renderer = new T.WebGPURenderer({
   forceWebGL: backendChoice === "webgl2",
-  samples: 4,
+  samples: temporalAA ? 0 : 4,
   trackTimestamp: profileRendering,
   canvas: $("world"),
-  antialias: true,
+  antialias: !temporalAA,
+  alpha: false,
   powerPreference: "high-performance",
 });
 await renderer.init();
+installCompilationContext(renderer);
 const gpuUploads = getGPUUploads(renderer);
 diagnostics.preparation = {
   uploads: gpuUploads.stats,
@@ -229,8 +235,11 @@ camera.coordinateSystem = renderer.coordinateSystem;
 camera.updateProjectionMatrix();
 camera.position.set(19, height(19, 43) + 4.2, 43);
 // Hardware multisampling is shared by both backends; no legacy WebGL composer.
-const composer = createAtmosphere(renderer, scene, camera, lightUniforms);
-diagnostics.antialiasing = { smaa: false, samples: 4 };
+let composer;
+diagnostics.antialiasing = {
+  mode: temporalAA ? "temporal-native" : "msaa",
+  samples: temporalAA ? 0 : 4,
+};
 renderer.info.autoReset = false;
 const controls = new FlyControls(camera, renderer.domElement);
 controls.target.set(-8, height(-8, -23) + 5, -23);
@@ -263,6 +272,14 @@ Object.assign(sun.shadow.camera, {
 sun.shadow.bias = -0.00015;
 sun.shadow.normalBias = 0.18;
 scene.add(sun, sun.target, ambient);
+composer = createAtmosphere(
+  renderer,
+  scene,
+  camera,
+  lightUniforms,
+  sun,
+  temporalAA,
+);
 const lamp = new T.PointLight(0xff8b32, 0, 55, 2);
 lamp.position.set(6, height(6, 5) + 3, 5);
 lamp.castShadow = true;
@@ -767,7 +784,7 @@ async function loadAssets() {
         name.startsWith("bark") ? 3 : name === "rock" ? 1 : 220,
       );
     }
-    const key = "normal-native-v3:" + (await digest(hash + nativeSource));
+    const key = "normal-material-v4:" + (await digest(hash + nativeSource));
     let record = await cache.get(key);
     if (!record) {
       const source = map.clone();
@@ -822,7 +839,8 @@ async function loadAssets() {
       g / Math.max(coverage, 1),
       b / Math.max(coverage, 1),
     );
-    const mipKey = "source-mips-v2:" + (await digest(hash + atlasWorkerSource));
+    const mipKey =
+      "source-mips-material-v3:" + (await digest(hash + atlasWorkerSource));
     let mipRecord = await cache.get(mipKey);
     if (!mipRecord) {
       sampleCanvas.width = map.image.width;
@@ -847,6 +865,7 @@ async function loadAssets() {
         views: 1,
         data,
         normals: record.data,
+        materialPayload: true,
         srgb: true,
         cutoff: ["oak", "birch", "ash", "pine", "hazel", "bramble"].includes(
           name,
@@ -1008,6 +1027,7 @@ function animate(now) {
         phaseStart = t;
       }
     : null;
+  lightUniforms.previousTime.value = lightUniforms.time.value;
   lightUniforms.time.value = now / 1000;
   if (lastCycleTime !== null && cycleRunning)
     worldHour = advanceHour(worldHour, (now - lastCycleTime) / 1000);
@@ -1143,6 +1163,7 @@ function animate(now) {
   updateClouds(renderer, now, lightUniforms, camera);
   mark?.("clouds");
   composer.render();
+  lightUniforms.previousCameraPosition.value.copy(camera.position);
   mark?.("render");
   if (profileRendering)
     diagnostics.renderProfile = {
@@ -1274,6 +1295,19 @@ if (import.meta.env.DEV || showcaseRequested)
 async function start() {
   await cache.open();
   const assets = await loadAssets();
+  progress("Baking whole-world directional horizons", 0.012);
+  diagnostics.worldLight = await prepareWorldLight(
+    renderer,
+    cache,
+    lightUniforms,
+    await digest(
+      WORLD_VERSION +
+        terrainGenerationSource +
+        watershedSource +
+        worldLightSource +
+        JSON.stringify(world.trees),
+    ),
+  );
   await nightWorld.prepare();
   progress("Baking cloud density and sunlight", 0.015);
   await prepareClouds(

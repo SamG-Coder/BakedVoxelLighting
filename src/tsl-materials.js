@@ -1,4 +1,5 @@
 import { GRASS_MIXES } from "./plant-catalog.js";
+import { worldHabitat, worldSunVisibility } from "./world-light.js";
 import { cloudAt, CLOUD_SHADOW_STRENGTH } from "./clouds.js";
 import * as K from "./native-kernels.js";
 import * as T from "three/webgpu";
@@ -91,13 +92,16 @@ export function sampleVolume(U, name, p, fallback) {
 // Whole-world canopy data remains available beyond the streamed voxel box.
 // Match the radiance bake's sky/day response instead of returning daytime RGB.
 export function distantSkyVisibility(U, p) {
-  const canopy = texRef(U, "rootField").sample(p.xz.add(2000).div(4000)).g;
-  return N.exp(canopy.mul(-1.8));
+  return worldHabitat(U, p).a;
 }
 export function distantRadiance(U, p) {
   const sky = distantSkyVisibility(U, p);
   const ambient = N.vec3(0.085, 0.115, 0.16).mul(sky.mul(0.85).add(0.15));
-  const bounce = N.vec3(0.012, 0.018, 0.008)
+  const bounce = N.mix(
+    N.vec3(0.02, 0.014, 0.008),
+    N.vec3(0.012, 0.023, 0.008),
+    worldHabitat(U, p).r,
+  )
     .mul(N.float(1).sub(sky))
     .mul(ref(U, "sunColour", "vec3"))
     .mul(0.8);
@@ -112,11 +116,23 @@ export function distantRadiance(U, p) {
           .add(bounce)
           .mul(N.float(1).sub(ref(U, "daylight")).mul(0.04)),
       ),
-    sky,
+    worldSunVisibility(U, p),
   );
 }
 export function sampleRadiance(U, p) {
   return sampleVolume(U, "bakedAtlas", p, distantRadiance(U, p));
+}
+// Source normal alpha carries a baked thin-material response. Surface atlases
+// use signed response: positive = foliage, negative = moss, zero = bare wood.
+export function foliageResponse(material, uv = null) {
+  const s = material.userData.shading || {};
+  if (!material.normalMap || !(s.grass || s.wind || s.transmission))
+    return N.float(0);
+  const a = N.texture(material.normalMap, uv).a;
+  if (s.surfacePayload) return N.max(a.mul(2).sub(1), 0);
+  return s.grass
+    ? a.mul(N.mix(0.45, 1, N.smoothstep(0.02, 0.65, N.uv().y)))
+    : a;
 }
 const fullFade = new T.Vector2(0, 1);
 const fadeRange = N.uniform(fullFade).onObjectUpdate(
@@ -174,6 +190,7 @@ function createDecorated(original, options, U, grid) {
     grassAtlas = 0,
     moss = false,
     roots = false,
+    surfacePayload = false,
   } = options;
   const m = new T.MeshStandardNodeMaterial();
   // Copy standard properties without copying GLSL hooks or changing NodeMaterial's type.
@@ -203,7 +220,7 @@ function createDecorated(original, options, U, grid) {
     m.maskNode = N.texture(m.map).a.greaterThan(N.float(m.alphaTest));
     m.alphaToCoverage = true;
   }
-  m.userData.shading = { wind, ground, transmission, grass };
+  m.userData.shading = { wind, ground, transmission, grass, surfacePayload };
   m.userData.grassAtlas = grassAtlas;
   const fittedPosition = roots
     ? rootConformPosition(U.terrainField.value, grid, instanceMatrix)
@@ -218,7 +235,7 @@ function createDecorated(original, options, U, grid) {
         builder.object.isInstancedMesh || builder.object.isAttributeInstances
           ? N.modelWorldMatrix.mul(instanceMatrix().element(3)).xyz
           : N.modelWorldMatrix.element(3).xyz;
-      return K.windPosition({
+      const inputs = {
         p: fittedPosition,
         t: ref(U, "time"),
         id,
@@ -226,21 +243,28 @@ function createDecorated(original, options, U, grid) {
         y: N.positionGeometry.y,
         v: N.uv().y,
         strength: N.float(wind),
-      });
+      };
+      N.positionPrevious.assign(
+        K.windPosition({ ...inputs, t: ref(U, "previousTime") }),
+      );
+      return K.windPosition(inputs);
     })();
-  if (roots && !wind) m.positionNode = fittedPosition;
+  if (roots && !wind)
+    m.positionNode = N.Fn(() => {
+      N.positionPrevious.assign(fittedPosition);
+      return fittedPosition;
+    })();
   if (moss) {
     m.colorNode = K.mossSurface({
       bark: N.materialColor,
       coverage: N.attribute("moss", "float"),
       n: N.normalWorld,
-      habitat: texRef(U, "mossEnvironment").sample(
-        N.positionWorld.xz.add(2000).div(4000),
-      ).rg,
+      habitat: worldHabitat(U, N.positionWorld).rg,
     });
     m.userData.moss = true;
   }
   let groundFade = N.float(0);
+  let groundResponse = N.float(0);
   let base = N.materialColor;
   if (ground) {
     const p = N.positionWorld,
@@ -248,7 +272,10 @@ function createDecorated(original, options, U, grid) {
       guv = p.xz.mul(0.72);
     const coordinates = surfaceCoordinates(guv, p.xz);
     const soil = variedSurface(N.texture(m.map), coordinates).rgb,
-      lush = variedSurface(texRef(U, "groundMap"), coordinates).rgb,
+      lush = variedSurface(
+        texRef(U, "grassSurface"),
+        atlasSurfaceCoordinates(coordinates, 0, GRASS_MIXES.length, 512),
+      ).rgb,
       // The baked dry habitat carries its actual seed-grass textures. Reuse
       // the fine ground detail underneath it to stay within 16 GPU samplers.
       dry = lush.mul(N.vec3(1.12, 0.94, 0.78));
@@ -285,6 +312,10 @@ function createDecorated(original, options, U, grid) {
         512,
       );
       const patchColour = variedSurface(map, patch).rgb;
+      const patchNormal = variedSurface(texRef(U, "grassSurfaceNormal"), patch);
+      groundResponse = groundResponse.add(
+        N.max(patchNormal.a.mul(2).sub(1), 0).mul(weight),
+      );
       if (k === 3) forestFloor = patchColour;
       surface = surface.add(patchColour.mul(weight));
       mean = mean.add(
@@ -293,12 +324,7 @@ function createDecorated(original, options, U, grid) {
           .level(9)
           .rgb.mul(weight),
       );
-      normal = normal.add(
-        variedSurface(texRef(U, "grassSurfaceNormal"), patch)
-          .rgb.mul(2)
-          .sub(1)
-          .mul(weight),
-      );
+      normal = normal.add(patchNormal.rgb.mul(2).sub(1).mul(weight));
     }
     groundFade = N.smoothstep(90, 300, N.distance(N.cameraPosition, p));
     m.colorNode = K.groundBlend({
@@ -329,6 +355,12 @@ function createDecorated(original, options, U, grid) {
       N.mix(m.normalNode, canopyView, groundFade.mul(cover.a).mul(0.85)),
     );
     base = m.colorNode;
+    // Damp river sediment and compacted paths reflect differently from litter.
+    m.roughnessNode = N.mix(
+      0.96,
+      0.67,
+      groundInfluence.b.mul(N.float(1).sub(groundInfluence.a)),
+    );
   }
   if (grass) {
     const mirror = grassAtlas ? grassMirror() : N.float(1);
@@ -371,6 +403,14 @@ function createDecorated(original, options, U, grid) {
     N.positionWorld.add(N.normalWorld.mul(grass ? 0.15 : 1.1)),
   ).rgb;
   const thin = transmission || (grass ? 0.26 : wind > 0 ? 0.32 : 0);
+  const responseUV = grassAtlas
+    ? grassAtlasUV(grassAtlas, grassMirror())
+    : null;
+  const response = foliageResponse(m, responseUV);
+  if (thin) {
+    m.roughnessNode = N.mix(0.94, grass ? 0.8 : 0.68, response);
+    if (!grass) m.aoNode = N.mix(0.86, 1, response);
+  }
   const extra = K.foliageRadiance({
     n: N.normalWorld,
     indirect,
@@ -387,7 +427,9 @@ function createDecorated(original, options, U, grid) {
     lamp: ref(U, "liveLampPosition", "vec3").sub(N.positionWorld),
     power: ref(U, "liveLampPower"),
     lampColour: ref(U, "liveLampColour", "vec3"),
-    thin: ground ? groundFade.mul(0.26) : N.float(thin),
+    thin: ground
+      ? groundFade.mul(0.48).mul(groundResponse)
+      : N.float(thin * 1.65).mul(response),
     daylight: ref(U, "daylight"),
     sunColour: ref(U, "sunColour", "vec3"),
   });
@@ -440,8 +482,37 @@ export function billboardTSL(m, atlas, merged = false) {
       .add(atlas.grassPatch ? atlas.centerY : 0)
       .mul(compression)
       .sub(atlas.grassPatch ? atlas.centerY : 0);
-    if (merged) return data.xyz.add(rotate(N.vec3(p.x, p.y, 0), angle));
+    const previousCamera = ref(
+      mossEnvironmentUniforms,
+      "previousCameraPosition",
+      "vec3",
+    );
+    const oldAngle = N.atan(
+      previousCamera.x.sub(data.x),
+      previousCamera.z.sub(data.z),
+    );
+    const oldCompression = atlas.grassPatch
+      ? N.float(1).sub(
+          N.smoothstep(110, 300, N.distance(previousCamera, data.xyz)).mul(
+            0.78,
+          ),
+        )
+      : N.float(1);
+    const oldY = p.y
+      .add(atlas.grassPatch ? atlas.centerY : 0)
+      .mul(oldCompression)
+      .sub(atlas.grassPatch ? atlas.centerY : 0);
+    if (merged) {
+      N.positionPrevious.assign(
+        data.xyz.add(rotate(N.vec3(p.x, p.y, 0), oldAngle)),
+      );
+      return data.xyz.add(rotate(N.vec3(p.x, p.y, 0), angle));
+    }
     const mat = instanceMatrix();
+    N.positionPrevious.assign(
+      mat.mul(N.vec4(rotate(N.vec3(p.x, oldY, 0), oldAngle.sub(data.w)), 1))
+        .xyz,
+    );
     return mat.mul(N.vec4(rotate(N.vec3(p.x, y, 0), angle.sub(data.w)), 1)).xyz;
   })();
   const map = N.texture(m.map, atlasUV);
@@ -475,15 +546,18 @@ export function billboardTSL(m, atlas, merged = false) {
   if (atlas.mossPayload)
     m.colorNode = K.mossSurface({
       bark: map.rgb,
-      coverage: N.texture(m.normalMap, atlasUV).a,
+      coverage: N.max(
+        N.float(1).sub(N.texture(m.normalMap, atlasUV).a.mul(2)),
+        0,
+      ),
       n: wn,
-      habitat: texRef(mossEnvironmentUniforms, "mossEnvironment").sample(
-        N.positionWorld.xz.add(2000).div(4000),
-      ).rg,
+      habitat: worldHabitat(mossEnvironmentUniforms, N.positionWorld).rg,
     });
   // Standard materialColor samples map at its ordinary UV. Explicitly bind both
   // albedo and emissive sampling to the selected atlas frame.
   m.emissiveNode = m.emissiveNode.context({ getUV: () => atlasUV });
+  m.roughnessNode = m.roughnessNode?.context({ getUV: () => atlasUV });
+  m.aoNode = m.aoNode?.context({ getUV: () => atlasUV });
   m.userData.surfaceMask = true;
   m.userData.billboard = { views: count, rows, normalSpace: "source-world" };
   return m;

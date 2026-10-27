@@ -60,6 +60,8 @@ export const lightUniforms = {
   volumeSize: { value: volumeSize },
   bakedEnabled: { value: 0 },
   time: { value: 0 },
+  previousTime: { value: 0 },
+  previousCameraPosition: { value: new T.Vector3() },
   daylight: { value: 1 },
   mossEnvironment: { value: fallback.clone() },
   sunColour: { value: new T.Vector3(1, 1, 1) },

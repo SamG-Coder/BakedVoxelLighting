@@ -2,7 +2,11 @@ import { prepareAtlasMips } from "./atlas-mips.js";
 import { shareAtlasBase } from "./atlas-storage.js";
 import * as N from "three/tsl";
 import { readPixels } from "./tsl-baking.js";
-import { billboardTSL, grassAtlasUV } from "./tsl-materials.js";
+import {
+  billboardTSL,
+  grassAtlasUV,
+  foliageResponse,
+} from "./tsl-materials.js";
 import * as T from "three/webgpu";
 import { AttributeInstances } from "./attribute-instances.js";
 import { decorate, fadeMaterial } from "./lighting.js";
@@ -106,13 +110,11 @@ export async function captureSurface(
                 });
                 return N.vec4(
                   worldNormal.mul(0.5).add(0.5),
-                  mossPayload
-                    ? original.userData.moss
-                      ? N.attribute("moss", "float")
-                      : N.float(0)
-                    : options.topDown
-                      ? 1
-                      : alpha,
+                  original.userData.moss
+                    ? N.float(0.5).sub(N.attribute("moss", "float").mul(0.5))
+                    : N.float(0.5).add(
+                        foliageResponse(original, sourceUV).mul(0.5),
+                      ),
                 );
               })();
             }
@@ -150,6 +152,7 @@ export async function captureSurface(
       }
       record = {
         mossPayload,
+        materialPayload: true,
         data: output[0],
         normals: output[1],
         w: size * views,
@@ -225,7 +228,7 @@ export function atlasMaterial(atlas, transmission = 0.32) {
       side: T.DoubleSide,
       roughness: 1,
     }),
-    { transmission, grass: transmission > 0.4 },
+    { transmission, grass: transmission > 0.4, surfacePayload: true },
   );
   billboardTSL(material, atlas.record);
   atlasTemplates.set(atlas, material);

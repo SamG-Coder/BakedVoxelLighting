@@ -86,13 +86,19 @@ export function createRiverMaterial(U) {
   const normal = surface.xyz;
   const depth = N.max(flow.w, 0);
   const foam = surface.w;
-  material.positionNode = riverDisplacement({
+  const displacement = {
     p: N.positionLocal,
     coord,
     depth,
     speed: flow.z,
     time,
-  });
+  };
+  material.positionNode = N.Fn(() => {
+    N.positionPrevious.assign(
+      riverDisplacement({ ...displacement, time: ref(U, "previousTime") }),
+    );
+    return riverDisplacement(displacement);
+  })();
   material.normalNode = N.cameraViewMatrix
     .mul(N.vec4(normal, 0))
     .xyz.normalize();
@@ -105,7 +111,19 @@ export function createRiverMaterial(U) {
     N.vec3(0.65, 0.72, 0.65),
     foam,
   );
-  material.roughnessNode = N.mix(N.float(0.09), N.float(0.6), foam);
+  // Faster riffles have broader highlights; quiet pools retain clearer images.
+  // Increase unresolved roughness with distance instead of sparkling subpixels.
+  const unresolved = N.smoothstep(
+    35,
+    220,
+    N.distance(N.cameraPosition, N.positionWorld),
+  );
+  const flowRoughness = N.mix(0.075, 0.15, N.smoothstep(0.18, 0.96, flow.z));
+  material.roughnessNode = N.mix(
+    flowRoughness.add(unresolved.mul(0.07)),
+    0.6,
+    foam,
+  );
   const view = N.cameraPosition.sub(N.positionWorld).normalize();
   const fresnel = N.pow(N.float(1).sub(N.max(view.dot(normal), 0)), 5);
   material.opacityNode = N.smoothstep(0, 0.16, depth).mul(
