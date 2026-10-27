@@ -70,4 +70,23 @@ Downhill buttresses exposed the prototype's flat lower surface as vertical slabs
 - WebGPU L0/L1/L2 and WebGL2 L0 rendered successfully. The WebGPU production woodland reached ready and a sloped-tree view rendered with no captured errors. The Pages build and whitespace checks passed.
 - Local evidence: `evidence/root-slope-before.png`, `evidence/root-slope-after.png`, `evidence/root-world-after.png`.
 
-Remaining landscape issues: river strip overlaps and deliberate road crossings, distant lighting consistency, and sparse landmark torch placement still require their own completed validation. This root fix does not resolve those items.
+Remaining landscape issues after the root pass: river strip overlaps and deliberate road crossings, distant lighting consistency, and sparse landmark torch placement. The torch pass below addresses the last item.
+
+## Selected improvement: sparse junction torches
+
+The continuous 18 m rows made wild woodland look built-up. Torches now mark actual route intersections (or endpoints meeting another route), with one lamp on a dry, unobstructed verge 7 m before each junction. The current map changes from 271 torches / 43 static pages to one torch / one page. Ordinary stretches remain unlit. The timber post, wrapped head, iron collars, volumetric flame, rendering distances and simulation resolution are unchanged.
+
+- Pool capacities follow the number of placed lamps: one flame and one point light here, bounded at 48 / 12 for larger networks. Light count stays fixed during movement to avoid pipeline recompilation.
+- Candidate records and the sorting comparator are reused instead of recreating selection arrays and spatial-query strings every 150 ms.
+- Road fires fade out during daylight. With no carried flame or visible road flame, the shared GPU simulation/readback stops. Browser daytime diagnostics stayed at the initial 60 warm-up steps and zero readbacks.
+- Segment intersection checks found the real crossing midway along a branch. Checking only branch endpoints would miss it. A different branch remains disconnected by over 200 m; road connectivity and deliberate river crossings need a separate correction.
+
+Validation:
+- Production layout and constructor checks passed: route tessellation invariance, shared-vertex crossing deduplication, parallel routes not mistaken for junctions, opposite-verge fallback, dry ground, trunk clearance, finite transforms, height, bounded pools, daytime shutdown and distant deactivation.
+- Same WebGPU junction overview captured before/after at noon and night. The close night view retains a visible flame and lit verge; the long illuminated rows are gone. No captured WebGPU errors.
+- WebGL2 also reached ready and rendered the night junction with no captured errors. Its default preview reported 49 FPS, so this is a backend correctness check, not evidence of meeting the performance target.
+- Two 200 m night walks at 6 m/s before and after: median 16.7 ms and p95 16.8 ms throughout. Baseline p99 16.8 / 16.8 ms, max 50.0 / 50.1 ms, intervals above 33.4 ms 2 / 1. Revised p99 33.3 / 33.3 ms, max 49.9 / 66.6 ms, intervals above 33.4 ms 6 / 2. This does **not** demonstrate smoother whole-scene performance or a guaranteed 59 FPS minimum. Keep the change for the verified placement improvement and lower torch work.
+- Scene residency differed between the independent builds, so total draw/heap snapshots are not an isolated torch benchmark. Cache warmth, streaming completion and desktop scheduling remain uncontrolled. Frame callback intervals are not GPU timings.
+- Production Pages build succeeds; no Actions tests added. Local evidence is in `evidence/torch-before-*` and `evidence/torch-after-*`.
+
+Current good: terrain-following roots, coherent riverbank material/grass masks, sparse purposeful lighting, retained full-detail plant assets. Current bad: streaming frame spikes and high memory, overlapping river confluences, a disconnected branch road and missing crossings, distant tree lighting mismatch, repeated middle-distance grass silhouettes. Next visual priority is a connected river/path network; the 60 FPS objective remains unresolved.

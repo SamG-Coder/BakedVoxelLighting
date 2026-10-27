@@ -224,7 +224,12 @@ export function createNightWorld(scene, camera, U, renderer, trees) {
       const active = enabled && carry;
       torchOn.value = active ? 1 : 0;
       torch.visible = active;
-      const roadsActive = roadTorches.update(camera, seconds, power, warmth);
+      const roadsActive = roadTorches.update(
+        camera,
+        seconds,
+        power * (1 - T.MathUtils.smoothstep(daylight, 0.15, 0.65)),
+        warmth,
+      );
       fire.advance(seconds, active || roadsActive);
       power +=
         (Math.min(320, Math.max(20, fire.stats.energy * 1800)) - power) *

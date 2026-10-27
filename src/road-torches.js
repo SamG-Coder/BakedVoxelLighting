@@ -15,10 +15,27 @@ export function createRoadTorches(
   headGeometry,
   trees,
 ) {
+  const clear = treeClearance(trees);
   const records = roadTorchLayout(routes, terrainHeight, seededRandom(731903), {
     traffic: (x, z) => terrainSample(x, z).traffic,
-    clear: treeClearance(trees),
+    clear: (x, z) => terrainSample(x, z).riverDistance > 9 && clear(x, z),
   });
+  if (!records.length)
+    return {
+      stats: {
+        total: 0,
+        pages: 0,
+        flames: 0,
+        lights: 0,
+        placement: "route landmarks",
+        lightCapacity: 0,
+        flameCapacity: 0,
+        height: [4.6, 5],
+        sharedSimulation: true,
+        glowDistance: 900,
+      },
+      update: () => false,
+    };
   const cells = new Map(),
     cellSize = 128;
   for (const p of records) {
@@ -88,7 +105,7 @@ export function createRoadTorches(
   );
   const material = createTorchVolumeMaterial(fire, visible);
   const geometry = new T.BoxGeometry(1, 1, 1);
-  const flames = Array.from({ length: 48 }, () => {
+  const flames = Array.from({ length: Math.min(48, records.length) }, () => {
     const mesh = new T.Mesh(geometry, material);
     mesh.scale.set(0.36 * 1.4, 0.7 * 1.4, 0.36 * 1.4);
     mesh.visible = false;
@@ -96,7 +113,7 @@ export function createRoadTorches(
     return mesh;
   });
   // Fixed light count avoids shader recompilation when walking between pages.
-  const lights = Array.from({ length: 12 }, () => {
+  const lights = Array.from({ length: Math.min(12, records.length) }, () => {
     const light = new T.PointLight(0xff9c42, 0, 24, 2);
     light.castShadow = false;
     scene.add(light);
@@ -127,48 +144,53 @@ export function createRoadTorches(
   glow.count = records.length;
   glow.frustumCulled = false;
   scene.add(glow);
-  let selected = [],
-    lastQuery = -Infinity;
+  // Records are fixed at startup: reuse selection objects for the entire walk.
+  const selected = records.map((p) => ({ p, distance: Infinity }));
+  const byDistance = (a, b) => a.distance - b.distance;
+  let lastQuery = -Infinity;
   const stats = {
     total: records.length,
     pages: cells.size,
     flames: 0,
     lights: 0,
-    spacing: [18, 18],
+    placement: "route landmarks",
     height: [4.6, 5],
     sharedSimulation: true,
     glowDistance: 900,
+    lightCapacity: lights.length,
+    flameCapacity: flames.length,
   };
   return {
     stats,
     update(camera, seconds, power, warmth) {
+      const burning = power > 0.5 && records.length > 0;
+      glow.visible = burning;
+      if (!burning) {
+        stats.flames = stats.lights = 0;
+        for (const mesh of flames) mesh.visible = false;
+        for (const light of lights) light.intensity = 0;
+        return false;
+      }
       if (seconds - lastQuery > 0.15) {
-        selected = [];
-        const gx = Math.floor(camera.position.x / cellSize),
-          gz = Math.floor(camera.position.z / cellSize);
-        for (let z = gz - 4; z <= gz + 4; z++)
-          for (let x = gx - 4; x <= gx + 4; x++) {
-            for (const p of cells.get(`${x},${z}`) ?? []) {
-              const distance = Math.hypot(
-                p.x - camera.position.x,
-                p.z - camera.position.z,
-              );
-              if (distance < 400) selected.push({ p, distance });
-            }
-          }
-        selected.sort((a, b) => a.distance - b.distance);
+        for (const candidate of selected)
+          candidate.distance = Math.hypot(
+            candidate.p.x - camera.position.x,
+            candidate.p.z - camera.position.z,
+          );
+        selected.sort(byDistance);
         lastQuery = seconds;
       }
-      stats.flames = Math.min(flames.length, selected.length);
+      stats.flames = 0;
       // At junctions the pool can fill before the normal range. Fade to zero
       // before its last slot, so selecting the next source never pops a flame.
       fireRange.value = Math.min(400, selected[flames.length]?.distance ?? 400);
-      glowEnergy.value = Math.max(0.25, Math.min(1.5, power / 120));
+      glowEnergy.value = Math.max(0, Math.min(1.5, power / 120));
       stats.lights = 0;
       for (let i = 0; i < flames.length; i++) {
         const candidate = selected[i],
           mesh = flames[i];
-        mesh.visible = !!candidate;
+        mesh.visible = !!candidate && candidate.distance < 400;
+        if (mesh.visible) stats.flames++;
         if (!candidate) continue;
         const p = candidate.p;
         mesh.position.set(p.x, p.y + p.head + 0.22 * 1.4, p.z);
@@ -193,7 +215,7 @@ export function createRoadTorches(
         light.color.setRGB(1, 0.28 + warmth * 0.32, 0.035 + warmth * 0.1);
         light.intensity = power * 2.2 * fade;
         light.updateMatrixWorld();
-        if (fade > 0) stats.lights++;
+        if (fade > 0 && burning) stats.lights++;
       }
       return stats.flames > 0;
     },
