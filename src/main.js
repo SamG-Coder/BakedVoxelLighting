@@ -698,6 +698,8 @@ const assetNames = [
   "lush-ground",
   "meadow-long",
   "meadow-seeds",
+  "grass-upright",
+  "grass-fine",
   "flowers-yellow",
   "flowers-purple",
   "hazel",
