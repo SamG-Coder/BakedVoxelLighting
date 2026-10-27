@@ -220,5 +220,6 @@ test("installed runtime patch is idempotent", async () => {
     "utf8",
   );
   assert.equal(patchRuntime(source), source);
-  assert.ok(source.startsWith("// BakedVoxelLighting allocation patch v1"));
+  assert.ok(source.includes("// BakedVoxelLighting allocation patch v1"));
+  assert.ok(source.includes("// BakedVoxelLighting asynchronous build budget v1"));
 });

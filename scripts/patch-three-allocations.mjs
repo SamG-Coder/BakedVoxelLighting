@@ -5,6 +5,7 @@ import { resolve } from "node:path";
 // Reproducible, version-pinned changes to the runtime bundle used by both
 // WebGPU and forceWebGL. No shader equations, bindings or update rates change.
 const marker = "// BakedVoxelLighting allocation patch v1";
+const yieldMarker = "// BakedVoxelLighting asynchronous build budget v1";
 function replaceOnce(source, before, after) {
   if (source.split(before).length !== 2)
     throw new Error(`Three allocation patch mismatch: ${before.slice(0, 90)}`);
@@ -77,9 +78,38 @@ export function patchUniforms(source) {
   );
   return source;
 }
+export function patchAsyncBuilder(source) {
+  // Only the async method changes. Keep synchronous builds and shader content
+  // identical; allow the host to account CPU work on both sides of every await.
+  const start = source.indexOf("\tasync buildAsync() {");
+  const end = source.indexOf("\n\t}\n", start) + 4;
+  if (start < 0 || end < start)
+    throw new Error("Missing NodeBuilder.buildAsync");
+  let method = source.slice(start, end);
+  method = replaceOnce(
+    method,
+    "\t\tthis.prebuild();",
+    `\t\tconst budgetYield = this.renderer.nodeBuildBudgetYield;
+\t\tlet started = budgetYield ? performance.now() : 0;
+\t\tthis.prebuild();`,
+  );
+  method = replaceOnce(
+    method,
+    "\t\t\t\tawait yieldToMain();",
+    `\t\t\t\tawait ( budgetYield?.( performance.now() - started ) || yieldToMain() );
+\t\t\t\tif ( budgetYield ) started = performance.now();`,
+  );
+  method = replaceOnce(
+    method,
+    "\t\treturn this;",
+    `\t\tconst pause = budgetYield?.( performance.now() - started );
+\t\tif ( pause ) await pause;
+\t\treturn this;`,
+  );
+  return source.slice(0, start) + method + source.slice(end);
+}
 export function patchRuntime(source) {
   source = source.replaceAll("\r\n", "\n");
-  if (source.startsWith(marker)) return source;
   const section = (header, patch) => {
     const start = source.indexOf(header);
     const end = source.indexOf("\n}\n", start) + 3;
@@ -89,9 +119,16 @@ export function patchRuntime(source) {
       patch(source.slice(start, end)) +
       source.slice(end);
   };
-  section("class Bindings extends DataMap {", patchBindings);
-  section("class UniformsGroup extends UniformBuffer {", patchUniforms);
-  return `${marker}\n${source}`;
+  if (!source.includes(marker)) {
+    section("class Bindings extends DataMap {", patchBindings);
+    section("class UniformsGroup extends UniformBuffer {", patchUniforms);
+    source = `${marker}\n${source}`;
+  }
+  if (!source.includes(yieldMarker)) {
+    source = patchAsyncBuilder(source);
+    source = `${yieldMarker}\n${source}`;
+  }
+  return source;
 }
 async function main() {
   const root = new URL("../node_modules/three/", import.meta.url);
@@ -103,7 +140,7 @@ async function main() {
   const result = patchRuntime(source);
   if (result !== source) await writeFile(path, result);
   console.log(
-    "Three 0.186.1: lazy binding keys and reusable uniform storage installed.",
+    "Three 0.186.1: allocation patches and asynchronous shader budget hook installed.",
   );
 }
 if (

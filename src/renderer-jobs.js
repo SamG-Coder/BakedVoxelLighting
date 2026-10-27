@@ -7,11 +7,39 @@ export const rendererJobStats = {
   pending: 0,
   completed: 0,
   maxStartMs: 0,
+  shaderStageMs: 0,
+  maxShaderStageMs: 0,
+  shaderBudgetYields: 0,
   errors: [],
 };
 let presenting = false;
 let preparationMs = 0;
 let creditAt = 0;
+let shaderChargedMs = 0;
+const nextPresentation = () =>
+  new Promise((resolve) => {
+    requestAnimationFrame(() => {
+      creditAt = performance.now();
+      preparationMs = 0;
+      setTimeout(resolve, 0);
+    });
+  });
+function budgetShaderStage(ms) {
+  // Called by the pinned Three build after each CPU shader stage, including
+  // continuations after awaits. Waiting time is never charged as CPU time.
+  shaderChargedMs += ms;
+  rendererJobStats.shaderStageMs += ms;
+  rendererJobStats.maxShaderStageMs = Math.max(
+    rendererJobStats.maxShaderStageMs,
+    ms,
+  );
+  preparationMs += ms;
+  if (presenting && !document.hidden && preparationMs >= 2) {
+    rendererJobStats.shaderBudgetYields++;
+    return nextPresentation();
+  }
+  return null;
+}
 export function setPreparationPresenting(value) {
   presenting = value;
   setUploadsInteractive(value);
@@ -25,11 +53,7 @@ const afterFrame = () =>
       preparationMs = 0;
     }
     if (presenting && !document.hidden && preparationMs >= 2)
-      requestAnimationFrame(() => {
-        creditAt = performance.now();
-        preparationMs = 0;
-        setTimeout(resolve, 0);
-      });
+      nextPresentation().then(resolve);
     else setTimeout(resolve, 0);
   });
 export function prepareForRender(
@@ -43,6 +67,7 @@ export function prepareForRender(
   priority,
 ) {
   rendererJobStats.pending++;
+  renderer.nodeBuildBudgetYield = budgetShaderStage;
   let queue = queues.get(renderer);
   if (!queue) queues.set(renderer, (queue = new PreparationQueue()));
   const job = queue
@@ -63,7 +88,8 @@ export function prepareForRender(
       });
       object.visible = true;
       const previous = renderer.getRenderTarget(),
-        started = performance.now();
+        started = performance.now(),
+        chargedBefore = shaderChargedMs;
       const sourceMaterial = object.material;
       const contexts = renderer._renderContexts;
       const getContext = contexts.get;
@@ -94,7 +120,12 @@ export function prepareForRender(
           o.frustumCulled = !!(flags & 2);
           saved[i] = null;
         }
-        preparationMs += performance.now() - started;
+        // The first shader stage runs before compileAsync returns its promise.
+        // Its hook already charged that CPU slice; only add capture overhead.
+        preparationMs += Math.max(
+          0,
+          performance.now() - started - (shaderChargedMs - chargedBefore),
+        );
         rendererJobStats.maxStartMs = Math.max(
           rendererJobStats.maxStartMs,
           performance.now() - started,

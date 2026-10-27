@@ -12,6 +12,7 @@ This is a working good/bad list, updated from rendered checks and measurements. 
 - WebGPU and WebGL2 both reached ready and rendered without captured shader errors in the browser checks.
 - Existing HLOD handoff and grass streaming unit checks continue to pass.
 - Global shader values now share render-scoped uniform bindings. A matched five-second WebGPU trace reduced node/binding CPU work by 27.8% with the same draw counts and scene detail; traversal spikes still remain.
+- Asynchronous shader stages now share the interactive preparation budget, including work resumed after an await. Replacements remain hidden until pipeline/upload readiness, with the existing resident LOD retained.
 
 ## Bad / needs refinement
 
@@ -168,3 +169,30 @@ Validation:
 - Evidence: `evidence/uniform-render-before.json`, `uniform-render-after.json`, `uniform-walk-before.json`, `uniform-walk-after.json`, both `uniform-readback-*.json`, and `uniform-world-day.png` / `uniform-world-night.png`.
 
 Current good: cheaper global uniform updates without lost detail, natural root bends, continuous river joins, connected paths and habitat-based vegetation. Current bad: occasional render-thread spikes, high memory, unfinished water crossings, distant tree-lighting mismatch and repeated grass/ground patterns. Next performance investigation should isolate the remaining slow render calls during first traversal, rather than claiming a smooth-60 result from the median.
+
+## Selected improvement: shader preparation across asynchronous stages
+
+The walking trace found repeated 2.5-4.8ms shader-node builds. Stack traces identify `compileAsync` preparation, not synchronous drawing. The old preparation budget charged only the initial call before its first await; subsequent shader stages could run consecutively through scheduler continuations before the browser presented another frame.
+
+The pinned Three 0.186.1 postinstall patch now exposes an optional asynchronous stage-yield hook. Renderer preparation charges each stage's actual CPU time, excluding awaited time, against its existing 2ms interactive budget. When that budget is exhausted it resumes after an animation callback and a task boundary. Synchronous builds, stage order, shader equations, density, geometry, textures, distances and LOD readiness rules are unchanged. The initial stage is not charged twice. An individual stage remains indivisible and can exceed 2ms; this is cooperative scheduling, not a hard real-time guarantee.
+
+Two controlled pairs used the same 600m route at 22m/s in the full WebGPU world. Each run started from a fresh page on the same origin with cached world data; the control disabled only the new stage-budget callback. The trace measured shader CPU accumulated between frame callbacks, not GPU time.
+
+| Measurement | Control 1 / 2 | Budgeted 1 / 2 |
+| --- | --- | --- |
+| Peak shader CPU between callbacks | 56.3 / 52.3ms | 4.3 / 3.9ms |
+| Median frame interval | 16.7 / 16.7ms | 16.7 / 16.7ms |
+| p95 / p99 frame interval | 16.8 / 16.8ms both runs | 16.8 / 16.8ms both runs |
+| Maximum frame interval | 66.7 / 50.0ms | 33.3 / 33.3ms |
+| Intervals above 33.4ms | 1 / 1 | 0 / 0 |
+
+The first pair completed the same 43 tree jobs with zero pending jobs, 85 shader states, 7,138 geometries, 15 detailed tree groups and 696 active grass tiles. Pool timing/total preparation-job counts vary with streaming. The revised scene still reached about 2.37GB JS heap: memory growth remains unresolved. These short instrumented walks establish a reduction in shader bursts, not a guaranteed 59 FPS minimum, an overnight stability result or a general GPU speedup.
+
+Validation:
+
+- The pinned-patch test verifies identical stage order, default behavior without the hook, CPU-only time accounting and awaited backpressure. Existing five allocation checks, 14 LOD-handoff checks and seven grass-streaming checks pass. Production build passes; no tests added to Actions.
+- Both WebGPU walks finished without captured runtime/preparation errors. Day and night still render the retained landscape detail.
+- WebGL2 also completed the 600m traversal with zero pending preparation jobs and no captured errors. Peak shader CPU between callbacks was 5.2ms, but the maximum frame interval was 66.7ms with three intervals above 33.4ms. This validates compatibility, not a WebGL2 performance win; other stalls remain.
+- Local evidence: `evidence/shader-budget-control*.json`, `shader-budget-after*.json`, `shader-budget-world.png` and `shader-budget-night.png`.
+
+Current good: preparation no longer packs many shader stages into one presentation interval, existing LODs remain visible until replacement readiness, and the natural-world assets/settings are retained. Current bad: occasional 33.3ms intervals still miss smooth 60 FPS, memory remains high, and visual work on crossings, distant lighting and grass repetition is still outstanding. Next performance target is long-session residency/retirement rather than more density reduction.
