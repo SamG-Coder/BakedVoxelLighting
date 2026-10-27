@@ -32,8 +32,13 @@ sun.position.set(-4, 5, 5);
 scene.add(sun);
 const grid = 2001,
   data = new Float32Array(grid * grid * 4);
+const profile = new URLSearchParams(location.search).get("slope") || "uneven";
 const height = (x, z) =>
-  -0.65 * x + 0.16 * Math.sin(z * 1.5) + 0.1 * Math.sin(x * 2);
+  profile === "flat"
+    ? 0
+    : profile === "steep"
+      ? -1.4 * x
+      : -0.65 * x + 0.16 * Math.sin(z * 1.5) + 0.1 * Math.sin(x * 2);
 for (let z = 0; z < grid; z++)
   for (let x = 0; x < grid; x++)
     data[(z * grid + x) * 4] = height(x * 2 - 2000, z * 2 - 2000);
@@ -100,7 +105,7 @@ function make() {
   mesh.setMatrixAt(0, pose.matrix);
   mesh.instanceMatrix.needsUpdate = true;
   scene.add(mesh);
-  report.textContent = `${gl ? "WebGL2" : "WebGPU"} | wood L${level} | terrain fitting ${material.positionNode ? "on" : "off"} | transformed ${transformed}`;
+  report.textContent = `${gl ? "WebGL2" : "WebGPU"} | ${profile} slope | wood L${level} | terrain fitting ${material.positionNode ? "on" : "off"} | transformed ${transformed}`;
 }
 make();
 document.querySelector("#toggle").onclick = () => {

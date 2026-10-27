@@ -127,3 +127,12 @@ Validation:
 - Local captures/reports: `evidence/road-network-before-*` and `evidence/road-network-after-*`. No new bitmap asset was needed for a route topology correction.
 
 Current good: connected branch roads, continuous river joins, terrain-fitting roots, coherent bank materials and sparse landmark lamps. Current bad: streaming spikes/high memory, missing bridges/fords, distant tree lighting mismatch, repeated grass patches and forest-floor tiling. Next performance priority remains finding the actual long-frame work during streaming; the full 60 FPS objective stays open.
+
+## Root follow-up: bend downhill instead of stretching
+
+The first terrain fit changed only vertex height. Downhill roots therefore gained length as the slope increased. The placed-tree shader now contracts horizontal reach by the local slope before fitting the root to the ground at its new position. On a planar slope the base's radial reach is preserved in 3D. The adjustment fades out at the existing two-metre prototype collar; uphill wood and the upper trunk are unchanged. The full deformation Jacobian updates normals, including the horizontal bend.
+
+- Keeps the same instanced geometry, vertex counts, textures and draw calls. No new per-frame CPU work or per-tree geometry. Root vertices use a second four-texel terrain sample; GPU cost has not been separately benchmarked.
+- Browser checks: WebGPU flat, uneven and steep slopes; L0 and transformed L2. WebGL2 steep L0 and transformed L1. No captured shader/runtime errors. The full WebGPU landscape loaded and its slope-root view was inspected (`evidence/root-bend-world.png`).
+- `npm run test:tree-surfaces`, `npm run build` and `git diff --check` passed. The slope fixture accepts `slope=flat` and `slope=steep` alongside its default uneven surface.
+- This remains an instanced root deformation, not a per-tree growth simulation. L3 whole-tree impostors still use their prototype capture. Terrain mesh approximation at different LODs can still differ from the sampled height field; the checks do not establish contact at every position on the map.
