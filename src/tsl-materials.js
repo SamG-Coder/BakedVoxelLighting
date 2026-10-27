@@ -7,6 +7,7 @@ import * as N from "three/tsl";
 import { ref, texRef, terrainNode } from "./tsl-baking.js";
 import { attributeInstanceMatrix } from "./attribute-instances.js";
 import { rootConformPosition } from "./root-conform.js";
+import { needsMotionVectors } from "./motion-pass.js";
 import {
   surfaceCoordinates,
   variedSurface,
@@ -95,12 +96,13 @@ export function distantSkyVisibility(U, p) {
   return worldHabitat(U, p).a;
 }
 export function distantRadiance(U, p) {
-  const sky = distantSkyVisibility(U, p);
+  const habitat = worldHabitat(U, p);
+  const sky = habitat.a;
   const ambient = N.vec3(0.085, 0.115, 0.16).mul(sky.mul(0.85).add(0.15));
   const bounce = N.mix(
     N.vec3(0.02, 0.014, 0.008),
     N.vec3(0.012, 0.023, 0.008),
-    worldHabitat(U, p).r,
+    habitat.r,
   )
     .mul(N.float(1).sub(sky))
     .mul(ref(U, "sunColour", "vec3"))
@@ -116,11 +118,25 @@ export function distantRadiance(U, p) {
           .add(bounce)
           .mul(N.float(1).sub(ref(U, "daylight")).mul(0.04)),
       ),
-    worldSunVisibility(U, p),
+    worldSunVisibility(U, p, habitat),
   );
 }
 export function sampleRadiance(U, p) {
-  return sampleVolume(U, "bakedAtlas", p, distantRadiance(U, p));
+  return N.Fn(() => {
+    // Native-function arguments are evaluated before sampleAtlas can choose
+    // its local-volume branch. Do not evaluate the distant horizon/terrain
+    // fallback for fragments fully covered by the streamed voxel volume.
+    const local = p.sub(ref(U, "volumeMin", "vec3"));
+    const edge = N.min(local, ref(U, "volumeSize", "vec3").sub(local));
+    const fallback = N.vec4(0).toVar();
+    N.If(
+      edge.x.lessThan(24).or(edge.z.lessThan(24)).or(edge.y.lessThan(6)),
+      () => {
+        fallback.assign(distantRadiance(U, p));
+      },
+    );
+    return sampleVolume(U, "bakedAtlas", p, fallback);
+  })();
 }
 // Source normal alpha carries a baked thin-material response. Surface atlases
 // use signed response: positive = foliage, negative = moss, zero = bare wood.
@@ -244,14 +260,16 @@ function createDecorated(original, options, U, grid) {
         v: N.uv().y,
         strength: N.float(wind),
       };
-      N.positionPrevious.assign(
-        K.windPosition({ ...inputs, t: ref(U, "previousTime") }),
-      );
+      if (needsMotionVectors(builder))
+        N.positionPrevious.assign(
+          K.windPosition({ ...inputs, t: ref(U, "previousTime") }),
+        );
       return K.windPosition(inputs);
     })();
   if (roots && !wind)
-    m.positionNode = N.Fn(() => {
-      N.positionPrevious.assign(fittedPosition);
+    m.positionNode = N.Fn((builder) => {
+      if (needsMotionVectors(builder))
+        N.positionPrevious.assign(fittedPosition);
       return fittedPosition;
     })();
   if (moss) {
@@ -467,7 +485,7 @@ export function billboardTSL(m, atlas, merged = false) {
       rows: N.float(rows),
     }),
   );
-  m.positionNode = N.Fn(() => {
+  m.positionNode = N.Fn((builder) => {
     const p = N.positionGeometry;
     // Keep roots fixed while the last geometric meadow layer settles into its
     // matching canopy surface. This avoids a ring of tall, repeated patch cards.
@@ -503,16 +521,18 @@ export function billboardTSL(m, atlas, merged = false) {
       .mul(oldCompression)
       .sub(atlas.grassPatch ? atlas.centerY : 0);
     if (merged) {
-      N.positionPrevious.assign(
-        data.xyz.add(rotate(N.vec3(p.x, p.y, 0), oldAngle)),
-      );
+      if (needsMotionVectors(builder))
+        N.positionPrevious.assign(
+          data.xyz.add(rotate(N.vec3(p.x, p.y, 0), oldAngle)),
+        );
       return data.xyz.add(rotate(N.vec3(p.x, p.y, 0), angle));
     }
     const mat = instanceMatrix();
-    N.positionPrevious.assign(
-      mat.mul(N.vec4(rotate(N.vec3(p.x, oldY, 0), oldAngle.sub(data.w)), 1))
-        .xyz,
-    );
+    if (needsMotionVectors(builder))
+      N.positionPrevious.assign(
+        mat.mul(N.vec4(rotate(N.vec3(p.x, oldY, 0), oldAngle.sub(data.w)), 1))
+          .xyz,
+      );
     return mat.mul(N.vec4(rotate(N.vec3(p.x, y, 0), angle.sub(data.w)), 1)).xyz;
   })();
   const map = N.texture(m.map, atlasUV);

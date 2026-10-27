@@ -1,5 +1,6 @@
 import * as T from "three/webgpu";
 import * as N from "three/tsl";
+import { needsMotionVectors } from "./motion-pass.js";
 import { buildRiverData } from "./river-data.js";
 import {
   riverTile,
@@ -93,10 +94,11 @@ export function createRiverMaterial(U) {
     speed: flow.z,
     time,
   };
-  material.positionNode = N.Fn(() => {
-    N.positionPrevious.assign(
-      riverDisplacement({ ...displacement, time: ref(U, "previousTime") }),
-    );
+  material.positionNode = N.Fn((builder) => {
+    if (needsMotionVectors(builder))
+      N.positionPrevious.assign(
+        riverDisplacement({ ...displacement, time: ref(U, "previousTime") }),
+      );
     return riverDisplacement(displacement);
   })();
   material.normalNode = N.cameraViewMatrix

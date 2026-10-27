@@ -167,7 +167,9 @@ const backendChoice =
   "webgpu";
 const profileRendering =
   import.meta.env.DEV && new URLSearchParams(location.search).has("profile");
-const temporalAA = new URLSearchParams(location.search).get("aa") !== "msaa";
+// Restore the pre-regression default. Temporal reconstruction remains an
+// explicit experiment until its extra full-scene motion work earns its cost.
+const temporalAA = new URLSearchParams(location.search).get("aa") === "taau";
 const renderer = new T.WebGPURenderer({
   forceWebGL: backendChoice === "webgl2",
   samples: temporalAA ? 0 : 4,

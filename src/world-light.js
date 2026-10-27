@@ -3,6 +3,36 @@ import * as N from "three/tsl";
 import { fullscreen, readPixels, texRef } from "./tsl-baking.js";
 import { uploadTextures } from "./gpu-uploads.js";
 
+const runtimeFields = new WeakMap();
+// Shared render-scoped data. The previous implementation introduced an
+// object-scoped sun ReferenceNode for every material and calculated the same
+// azimuth with atan/mod/floor in every horizon lookup.
+export function horizonSunParameters(sun, out) {
+  const index = (Math.atan2(sun.x, sun.z) / (Math.PI / 4) + 8) % 8;
+  const a = Math.floor(index);
+  out.set(
+    a + 1,
+    ((a + 1) % 8) + 1,
+    index - a,
+    sun.y / Math.max(Math.hypot(sun.x, sun.z), 0.001),
+  );
+  return out;
+}
+function runtimeField(U) {
+  let field = runtimeFields.get(U);
+  if (!field) {
+    const value = new T.Vector4();
+    const sun = N.uniform(value)
+      .setGroup(N.renderGroup)
+      .onRenderUpdate(() =>
+        horizonSunParameters(U.liveSunDirection.value, value),
+      );
+    field = { map: texRef(U, "mossEnvironment"), sun };
+    runtimeFields.set(U, field);
+  }
+  return field;
+}
+
 // A resident 256² world field and eight directional horizon tiles. 2.25 MiB,
 // independent of streamed fine voxels. Bake once per world; relight at runtime.
 export async function prepareWorldLight(renderer, cache, U, identity) {
@@ -87,30 +117,22 @@ export async function prepareWorldLight(renderer, cache, U, identity) {
 
 export function worldHabitat(U, p) {
   const q = N.clamp(p.xz.add(2000).div(4000), 0.5 / 256, 1 - 0.5 / 256);
-  return texRef(U, "mossEnvironment").sample(N.vec2(q.x.div(9), q.y));
+  return runtimeField(U)
+    .map.sample(N.vec2(q.x.div(9), q.y))
+    .level(0);
 }
 
-export function worldSunVisibility(U, p) {
+export function worldSunVisibility(U, p, habitat = worldHabitat(U, p)) {
   const q = N.clamp(p.xz.add(2000).div(4000), 0.5 / 256, 1 - 0.5 / 256);
-  const map = texRef(U, "mossEnvironment");
-  const sun = N.reference("value", "vec3", U.liveSunDirection);
-  const index = N.mod(
-    N.atan(sun.x, sun.z)
-      .div(Math.PI / 4)
-      .add(8),
-    8,
-  );
-  const a = N.floor(index),
-    b = N.mod(a.add(1), 8);
-  const first = map.sample(N.vec2(q.x.add(a.add(1)).div(9), q.y));
-  const second = map.sample(N.vec2(q.x.add(b.add(1)).div(9), q.y));
-  const horizon = N.mix(first, second, N.fract(index));
-  const habitat = worldHabitat(U, p);
+  const { map, sun } = runtimeField(U);
+  const first = map.sample(N.vec2(q.x.add(sun.x).div(9), q.y)).level(0);
+  const second = map.sample(N.vec2(q.x.add(sun.y).div(9), q.y)).level(0);
+  const horizon = N.mix(first, second, sun.z);
   const height = p.y.sub(habitat.b.mul(2048).sub(512)).sub(2);
   const slope = N.tan(horizon.rg.mul(Math.PI / 2)).sub(
     height.div(N.max(horizon.ba.mul(2048), 8)),
   );
-  const elevation = sun.y.div(N.max(N.length(sun.xz), 0.001));
+  const elevation = sun.w;
   const terrain = N.smoothstep(
     slope.x.sub(0.025),
     slope.x.add(0.025),

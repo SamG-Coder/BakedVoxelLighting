@@ -1,6 +1,7 @@
 import * as T from "three/webgpu";
 import * as N from "three/tsl";
 import { leaseGeometry } from "./shared-geometry.js";
+import { needsMotionVectors } from "./motion-pass.js";
 const boundsMatrix = new T.Matrix4();
 const transformedBounds = new T.Sphere();
 
@@ -9,10 +10,11 @@ const transformedBounds = new T.Sphere();
 // graph by object UUID. These attributes are resolved from each draw's geometry.
 export const attributeInstanceMatrix = () =>
   N.mat4(...[0, 1, 2, 3].map((i) => N.attribute(`tileMatrix${i}`, "vec4")));
-const setupInstances = N.Fn(() => {
+const setupInstances = N.Fn((builder) => {
   const matrix = attributeInstanceMatrix();
   N.positionLocal.assign(matrix.mul(N.positionLocal).xyz);
-  N.positionPrevious.assign(matrix.mul(N.positionPrevious).xyz);
+  if (needsMotionVectors(builder))
+    N.positionPrevious.assign(matrix.mul(N.positionPrevious).xyz);
   N.normalLocal.assign(N.transformNormal(N.normalLocal, matrix));
   N.instanceColor.assign(N.attribute("tileColour", "vec3"));
 }, "void");

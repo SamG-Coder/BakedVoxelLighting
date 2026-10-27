@@ -2,6 +2,20 @@
 
 This is a working good/bad list, updated from rendered checks and measurements. A stationary 60 FPS reading is not an acceptance test for streaming. Target: natural appearance at the existing quality settings with smooth 60 FPS traversal.
 
+## 2026-10-28: rendering regression correction
+
+Compared c16938d with its parent after the user reported a slowdown. Restored 4x MSAA as the default; `?aa=taau` explicitly selects the experimental temporal/contact-shadow path. The opaque final composite and the distant grass colour fix remain in both modes.
+
+The diff also introduced work outside temporal presentation: explicit previous-position assignments repeated wind, root fitting, billboard rotation and water displacement in passes without velocity output. These assignments are now gated at shader-build time to the velocity MRT. Shadow, reflection, surface-bake and ordinary MSAA passes do not generate them. Distant radiance was an eagerly evaluated native-function argument, even in the interior of the fine voxel volume. Its horizon fallback now runs only in the original 24m horizontal/6m vertical blend border or outside the volume. The existing blend weights and lighting equations are retained.
+
+Whole-world lighting now shares a single texture node and render-scoped sun parameters, reusing a Vector4. It removes per-material object-scoped sun references and repeated per-pixel azimuth calculations; habitat samples are reused within each radiance lookup. No vegetation population, geometry, LOD range, texture resolution or bake resolution was reduced.
+
+Three 0.186.1 source inspection did not establish a new large per-frame allocation in its temporal history targets or VelocityNode matrices: these are retained after setup. Existing pinned binding/uniform allocation patches and the asynchronous build-budget hook still pass their local regression checks. No speculative new engine patch was applied.
+
+Local WebGPU 1280x800, noon, same stationary starting camera: the prior temporal path measured 44.1 FPS (22.7ms average interval, 33.4ms p99); disabling only contact shadows measured 45.3 FPS. After the combined corrections with restored MSAA, a 15-second check measured 59.5 FPS, 16.8ms average/p99, and a 33.4ms maximum interval, with no captured errors. Draw count stayed approximately 2,200. These are combined-change results, not an isolated attribution or a guarantee for traversal. Heap remained around 1.84–1.87GB during the fixed sample; this is not a claim of zero GC or resolved long-session memory growth. Evidence: `evidence/aa-taau-baseline.json`, `aa-taau-no-contact.json`, `aa-regression-fixed.json`, `aa-regression-fixed.png`.
+
+Local sun-parameter/motion-pass, visual-pipeline, Three allocation, and async-builder checks pass, along with the production build. No Actions tests added. Further water/cloud visual work is paused.
+
 ## 2026-10-28: foliage and temporal rendering
 
 - Baked a transmission approximation into existing normal-map alpha. Source mips, packed grass, tree HLODs and meadow surfaces preserve it separately from cutout coverage. This is inferred from occupancy/pigment, not a measured leaf thickness scan.
