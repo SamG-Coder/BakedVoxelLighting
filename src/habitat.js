@@ -33,9 +33,9 @@ export function seededRandom(seed) {
 export function woodlandHabitat(x, z, land) {
   const stand = smooth(0.28, 0.74, land.forest ?? 0);
   const gap = smooth(
-    0.64,
-    0.82,
-    patchNoise(x * 0.016 + 71, z * 0.016 - 19, 823),
+    0.72,
+    0.89,
+    patchNoise(x * 0.032 + 71, z * 0.032 - 19, 823),
   );
   const core = stand * (1 - gap);
   return { stand, gap, core, edge: 4 * core * (1 - core) };
@@ -74,6 +74,20 @@ export function grassHabitat(x, z, land) {
   const weights = GRASS_TYPES.map((_, type) =>
     GRASS_MIXES.reduce((total, mix, i) => total + mix[type] * mixes[i], 0),
   );
+  // Fern colonies favour damp shelter. Reassign their share to fine woodland
+  // grass on dry sites without changing the four baked habitat channels.
+  const fernShare = weights[7];
+  weights[7] *= smooth(0.22, 0.7, moisture) * (0.3 + colony * 0.7);
+  weights[3] += fernShare - weights[7];
+  // Bracken colonies prefer openings and edges; wild strawberry fills sheltered litter.
+  // Exchange weights rather than adding instances: density and draw budget stay fixed.
+  const brackenShare = weights[8];
+  weights[8] *= (0.25 + wood.edge * 0.75) * smooth(0.15, 0.5, moisture);
+  weights[9] += brackenShare - weights[8];
+  const edgeBracken =
+    weights[3] * wood.edge * (0.2 + colony * 0.5) * smooth(0.2, 0.6, moisture);
+  weights[3] -= edgeBracken;
+  weights[8] += edgeBracken;
   const short = smooth(0.6, 0.83, patchNoise(x * 0.043, z * 0.043, 719));
   const vigour = 0.76 + broad * 0.28;
   const tint = 0.82 + fine * 0.14;

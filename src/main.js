@@ -1,3 +1,6 @@
+import terrainGenerationSource from "./terrain-generation.js?raw";
+import watershedSource from "./watershed.js?raw";
+import terrainNoiseSource from "./terrain-noise.js?raw";
 import { createNightWorld } from "./night-world.js";
 import { buildDeadwood } from "./deadwood.js";
 import deadwoodSource from "./deadwood-data.js?raw";
@@ -696,6 +699,11 @@ const assetNames = [
   "bramble",
   "pine",
   "ground-meadow",
+  "woodland-litter",
+  "fern",
+  "bracken",
+  "wild-strawberry",
+  "scree",
 ];
 async function loadAssets() {
   const assets = {},
@@ -742,6 +750,8 @@ async function loadAssets() {
         "meadow-ground",
         "lush-ground",
         "ground-meadow",
+        "woodland-litter",
+        "scree",
       ].includes(name)
     ) {
       map.wrapS = map.wrapT = T.RepeatWrapping;
@@ -904,6 +914,9 @@ async function loadAssets() {
       worldSource +
       terrainSource +
       terrainMathSource +
+      watershedSource +
+      terrainNoiseSource +
+      terrainGenerationSource +
       terrainSnapshotSource +
       vegetationSource +
       deadwoodSource +
@@ -932,6 +945,9 @@ async function loadAssets() {
       worldSource +
       terrainSource +
       terrainMathSource +
+      watershedSource +
+      terrainNoiseSource +
+      terrainGenerationSource +
       terrainSnapshotSource +
       impostorSource +
       mergedSource +
@@ -1394,7 +1410,11 @@ async function start() {
   });
   diagnostics.areaIndexes = indexVoxelWorld(world);
   world.bakeIdentity = await digest(
-    assetHash + surfaceIdentity + JSON.stringify([world.trees, world.deadwood]),
+    assetHash +
+      surfaceIdentity +
+      watershedSource +
+      terrainNoiseSource +
+      JSON.stringify([world.trees, world.deadwood]),
   );
   await bake();
   if (!diagnostics.ready) return;

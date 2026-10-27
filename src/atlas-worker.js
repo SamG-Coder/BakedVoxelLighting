@@ -1,5 +1,6 @@
 // Each frame is reduced independently: no colour/alpha bleeding between views.
 self.onmessage = ({ data: { id, record, sources, tileSize } }) => {
+  const plantColumns = sources ? Math.min(4, sources.length) : 0;
   if (sources) {
     const w = tileSize * sources.length,
       h = tileSize,
@@ -163,6 +164,33 @@ self.onmessage = ({ data: { id, record, sources, tileSize } }) => {
     weights = nextWeights;
     previous = { data, normals: ns, width, height };
     levels.push(previous);
+  }
+  // Fold plant strips only after independently filtering every species. Keep
+  // 1024px per plant while staying below the baseline GPU 8192px dimension.
+  if (plantColumns) {
+    const rows = Math.ceil(views / plantColumns);
+    for (const level of levels) {
+      const cell = level.width / views,
+        oldWidth = level.width;
+      const width = cell * plantColumns,
+        height = level.height * rows;
+      for (const channel of ["data", "normals"]) {
+        const source = level[channel],
+          packed = new Uint8Array(width * height * 4);
+        for (let f = 0; f < views; f++)
+          for (let y = 0; y < level.height; y++) {
+            const start = (y * oldWidth + f * cell) * 4;
+            const dest =
+              ((Math.floor(f / plantColumns) * level.height + y) * width +
+                (f % plantColumns) * cell) *
+              4;
+            packed.set(source.subarray(start, start + cell * 4), dest);
+          }
+        level[channel] = packed;
+      }
+      level.width = width;
+      level.height = height;
+    }
   }
   self.postMessage(
     { id, levels },

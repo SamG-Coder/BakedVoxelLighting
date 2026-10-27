@@ -1,11 +1,7 @@
+import { sampleHydrology, regionalHeight } from "./watershed.js";
 import * as T from "three/webgpu";
 import { decorate, lightUniforms } from "./lighting.js";
-import {
-  terrainSample,
-  TERRAIN_SIZE,
-  TERRAIN_GRID,
-  riverCenter,
-} from "./terrain-field.js";
+import { terrainSample, TERRAIN_SIZE, TERRAIN_GRID } from "./terrain-field.js";
 import { height, random } from "./world-data.js";
 import { instanced } from "./impostors.js";
 import { buildRiver } from "./river.js";
@@ -78,12 +74,12 @@ export function updateTerrain(camera) {
       camera.position.x - tile.x,
       camera.position.z - tile.z,
     );
-    const level = d < 260 ? 0 : d < 850 ? 1 : 2;
+    const level = tile.levels.length === 1 ? 0 : d < 260 ? 0 : d < 850 ? 1 : 2;
     tile.requestedLevel = level;
     tile.distance = d;
     // Keep the whole-world coarse surface. Release only hidden high-detail GPU
     // allocations well outside their ring; CPU vertices remain ready to upload.
-    for (let i = 0; i < 2; i++) {
+    for (let i = 0; i < tile.levels.length - 1; i++) {
       const mesh = tile.levels[i];
       if (
         d > (i === 0 ? 390 : 1050) &&
@@ -122,7 +118,7 @@ export function updateTerrain(camera) {
 }
 export function buildEnvironment(scene, assets) {
   lightUniforms.groundMap.value = assets["ground-meadow"].map;
-  lightUniforms.rockMap.value = assets.rock.map;
+  lightUniforms.rockMap.value = assets.scree.map;
   lightUniforms.dryGroundMap.value = assets["meadow-ground"].map;
   const material = decorate(
     new T.MeshStandardMaterial({
@@ -136,66 +132,68 @@ export function buildEnvironment(scene, assets) {
   );
   const ground = new T.Group();
   const size = TERRAIN_SIZE / 32;
+  const waterQuery = {};
   for (let z = 0; z < 32; z++)
     for (let x = 0; x < 32; x++) {
       const cx = -TERRAIN_SIZE / 2 + (x + 0.5) * size,
         cz = -TERRAIN_SIZE / 2 + (z + 0.5) * size;
-      const riverTile = Math.abs(cx - riverCenter(cz)) < size * 0.75 + 20;
-      const levels = (riverTile ? [48, 48, 48] : [48, 12, 4]).map(
-        (segments) => {
-          const g = new T.PlaneGeometry(size, size, segments, segments);
-          g.rotateX(-Math.PI / 2);
-          const p = g.attributes.position,
-            n = g.attributes.normal;
-          for (let i = 0; i < p.count; i++) {
-            const wx = p.getX(i) + cx,
-              wz = p.getZ(i) + cz;
-            p.setXYZ(i, wx, height(wx, wz), wz);
-            const normal = new T.Vector3(
-              height(wx - 1, wz) - height(wx + 1, wz),
-              2,
-              height(wx, wz - 1) - height(wx, wz + 1),
-            ).normalize();
-            n.setXYZ(i, normal.x, normal.y, normal.z);
-          }
-          // Add vertical skirts without depressing the sampled top surface.
-          const positions = Array.from(p.array),
-            normals = Array.from(n.array),
-            uvs = Array.from(g.attributes.uv.array),
-            indices = Array.from(g.index.array);
-          const edge = [];
-          for (let i = 0; i < segments; i++) edge.push(i);
-          for (let i = 0; i < segments; i++)
-            edge.push(i * (segments + 1) + segments);
-          for (let i = segments; i > 0; i--)
-            edge.push(segments * (segments + 1) + i);
-          for (let i = segments; i > 0; i--) edge.push(i * (segments + 1));
-          const base = p.count;
-          edge.forEach((i) => {
-            positions.push(p.getX(i), p.getY(i) - 32, p.getZ(i));
-            normals.push(n.getX(i), n.getY(i), n.getZ(i));
-            uvs.push(g.attributes.uv.getX(i), g.attributes.uv.getY(i));
-          });
-          edge.forEach((a, i) => {
-            const j = (i + 1) % edge.length,
-              b = edge[j];
-            indices.push(a, b, base + i, b, base + j, base + i);
-          });
-          g.setAttribute(
-            "position",
-            new T.Float32BufferAttribute(positions, 3),
+      const riverTile =
+        sampleHydrology(cx, cz, waterQuery).distance < size * 0.75 + 20;
+      // Channel beds retain full precision at every distance. One resident mesh
+      // avoids constructing/uploading three identical copies of these pages.
+      const levels = (riverTile ? [48] : [48, 12, 4]).map((segments) => {
+        const g = new T.PlaneGeometry(size, size, segments, segments);
+        g.rotateX(-Math.PI / 2);
+        const p = g.attributes.position,
+          n = g.attributes.normal;
+        for (let i = 0; i < p.count; i++) {
+          const wx = p.getX(i) + cx,
+            wz = p.getZ(i) + cz;
+          p.setXYZ(i, wx, height(wx, wz), wz);
+          const nx = height(wx - 1, wz) - height(wx + 1, wz),
+            nz = height(wx, wz - 1) - height(wx, wz + 1),
+            inverseLength = 1 / Math.hypot(nx, 2, nz);
+          n.setXYZ(
+            i,
+            nx * inverseLength,
+            2 * inverseLength,
+            nz * inverseLength,
           );
-          g.setAttribute("normal", new T.Float32BufferAttribute(normals, 3));
-          g.setAttribute("uv", new T.Float32BufferAttribute(uvs, 2));
-          g.setIndex(indices);
-          const mesh = new T.Mesh(g, material);
-          mesh.userData.terrainTile = true;
-          mesh.receiveShadow = true;
-          mesh.visible = false;
-          ground.add(mesh);
-          return mesh;
-        },
-      );
+        }
+        // Add vertical skirts without depressing the sampled top surface.
+        const positions = Array.from(p.array),
+          normals = Array.from(n.array),
+          uvs = Array.from(g.attributes.uv.array),
+          indices = Array.from(g.index.array);
+        const edge = [];
+        for (let i = 0; i < segments; i++) edge.push(i);
+        for (let i = 0; i < segments; i++)
+          edge.push(i * (segments + 1) + segments);
+        for (let i = segments; i > 0; i--)
+          edge.push(segments * (segments + 1) + i);
+        for (let i = segments; i > 0; i--) edge.push(i * (segments + 1));
+        const base = p.count;
+        edge.forEach((i) => {
+          positions.push(p.getX(i), p.getY(i) - 32, p.getZ(i));
+          normals.push(n.getX(i), n.getY(i), n.getZ(i));
+          uvs.push(g.attributes.uv.getX(i), g.attributes.uv.getY(i));
+        });
+        edge.forEach((a, i) => {
+          const j = (i + 1) % edge.length,
+            b = edge[j];
+          indices.push(a, b, base + i, b, base + j, base + i);
+        });
+        g.setAttribute("position", new T.Float32BufferAttribute(positions, 3));
+        g.setAttribute("normal", new T.Float32BufferAttribute(normals, 3));
+        g.setAttribute("uv", new T.Float32BufferAttribute(uvs, 2));
+        g.setIndex(indices);
+        const mesh = new T.Mesh(g, material);
+        mesh.userData.terrainTile = true;
+        mesh.receiveShadow = true;
+        mesh.visible = false;
+        ground.add(mesh);
+        return mesh;
+      });
       terrainTiles.push({
         x: cx,
         z: cz,
@@ -204,6 +202,56 @@ export function buildEnvironment(scene, assets) {
       });
     }
   scene.add(ground);
+  // Coarse surrounding terrain comes from the same regional watershed solve.
+  // Its inner edge matches the playable heightfield exactly; no detached skyline.
+  const horizon = new T.Group();
+  horizon.name = "Regional horizon";
+  // The playable ground-cover lookup clamps at 4km. Using it outside that
+  // domain extrudes the last texel into stripes; use world-tiled surfaces here.
+  const horizonMaterial = new T.MeshStandardNodeMaterial({
+    map: assets["ground-meadow"].map,
+    normalMap: assets["ground-meadow"].normal,
+    roughness: 1,
+    color: 0xbfb292,
+  });
+  for (const [cx, cz, width, depth] of [
+    [0, -2280, 5120, 560],
+    [0, 2280, 5120, 560],
+    [-2280, 0, 560, 4000],
+    [2280, 0, 560, 4000],
+  ]) {
+    const geometry = new T.PlaneGeometry(
+      width,
+      depth,
+      Math.ceil(width / 40),
+      Math.ceil(depth / 40),
+    );
+    geometry.rotateX(-Math.PI / 2);
+    const positions = geometry.attributes.position;
+    for (let i = 0; i < positions.count; i++) {
+      const x = positions.getX(i) + cx,
+        z = positions.getZ(i) + cz;
+      const edge = Math.max(Math.abs(x) - 2000, Math.abs(z) - 2000, 0);
+      const blend = Math.min(1, edge / 60);
+      geometry.attributes.uv.setXY(i, (x + 2000) / 4000, (z + 2000) / 4000);
+      positions.setXYZ(
+        i,
+        x,
+        height(
+          Math.max(-2000, Math.min(2000, x)),
+          Math.max(-2000, Math.min(2000, z)),
+        ) *
+          (1 - blend) +
+          regionalHeight(x, z) * blend,
+        z,
+      );
+    }
+    geometry.computeVertexNormals();
+    const mesh = new T.Mesh(geometry, horizonMaterial);
+    mesh.receiveShadow = false; // Outside the playable voxel / terrain-shadow domain.
+    horizon.add(mesh);
+  }
+  scene.add(horizon);
   const water = buildRiver(scene, height, lightUniforms);
   const rng = random(607),
     sets = Array.from({ length: 6 }, () => []);

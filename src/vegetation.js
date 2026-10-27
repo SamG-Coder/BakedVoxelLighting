@@ -20,6 +20,7 @@ import { GrassStreamQueue } from "./grass-stream-queue.js";
 import { PreparationQueue } from "./preparation-queue.js";
 import { VegetationInstancePool } from "./vegetation-instance-pool.js";
 import { AttributeInstances } from "./attribute-instances.js";
+import { instanceCapacity, takeCapacityGroup } from "./instance-capacity.js";
 import { prioritizeArea } from "./streaming-view.js";
 import { disposeVegetationGroup as removeLevel } from "./vegetation-resources.js";
 import * as T from "three/webgpu";
@@ -445,20 +446,22 @@ function grassMaterial(assets) {
   grassMaterialCache.set(assets, material);
   return fadeMaterial(material.clone());
 }
-function grassMesh(assets, batch) {
+function grassMesh(assets, batch, capacity = batch.matrices.length / 16) {
   const geometry = grassCard.clone();
   geometry.setAttribute(
     "plantType",
-    new T.InstancedBufferAttribute(batch.types, 1),
+    new T.InstancedBufferAttribute(new Float32Array(capacity), 1),
   );
   const mesh = new AttributeInstances(
     geometry,
     grassMaterial(assets),
-    batch.matrices.length / 16,
+    capacity,
   );
   mesh.instanceMatrix.array.set(batch.matrices);
   mesh.instanceMatrix.needsUpdate = true;
-  mesh.instanceColor = new T.InstancedBufferAttribute(batch.colours, 3);
+  mesh.instanceColor.array.set(batch.colours);
+  mesh.geometry.attributes.plantType.array.set(batch.types);
+  mesh.instanceCount = batch.matrices.length / 16;
   mesh.userData.ownedGeometry = true;
   mesh.userData.grassCard = true;
   mesh.receiveShadow = true;
@@ -614,9 +617,12 @@ export function buildGrass(assets) {
           grass.identity,
         );
         if (!wanted()) return;
-        const group = spare[level].pop() || new T.Group();
-        group.userData.poolIdentity = grass.identity;
         const batch = batches[0];
+        const capacity = instanceCapacity(batch.matrices.length / 16);
+        const group =
+          takeCapacityGroup(spare[level], capacity) || new T.Group();
+        group.userData.poolIdentity = grass.identity;
+        group.userData.instanceCapacity = capacity;
         let mesh = group.children[0];
         if (mesh && mesh.instanceMatrix.count < batch.matrices.length / 16) {
           group.remove(mesh);
@@ -625,17 +631,9 @@ export function buildGrass(assets) {
         }
         if (batch.matrices.length) {
           if (!mesh) {
-            // Fixed capacity lets subsequent tiles reuse the same instance buffers
-            // and Three node-builder state instead of compiling another graph.
-            const capacity = Math.max(
-              batch.matrices.length / 16,
-              Math.ceil((GRASS_COUNT * 2) / (level === 1 ? 3 : 1)),
-            );
-            mesh = grassMesh(assets, {
-              matrices: new Float32Array(capacity * 16),
-              colours: new Float32Array(capacity * 3),
-              types: new Float32Array(capacity),
-            });
+            // Reuse within a capacity class. The constructor allocates its own
+            // instance buffers; do not allocate another full set just to copy zeros.
+            mesh = grassMesh(assets, batch, capacity);
             group.add(mesh);
           }
           mesh.instanceCount = batch.matrices.length / 16;
@@ -1084,7 +1082,8 @@ async function bakeGrassSurface(renderer, cache, identity, assets) {
         litter.userData.ownedGeometry = true;
         source.add(litter);
       }
-      const baseMap = assets[k === 3 ? "dirt" : "ground-meadow"].map.clone();
+      const baseMap =
+        assets[k === 3 ? "woodland-litter" : "ground-meadow"].map.clone();
       // An even number of mirrored repeats joins both capture borders exactly,
       // including source photographs whose opposite edges do not match.
       baseMap.wrapS = baseMap.wrapT = T.MirroredRepeatWrapping;

@@ -1,66 +1,53 @@
-// Pure landscape functions shared with preparation workers; no world generation.
+import { fbm, noise } from "./terrain-noise.js";
+import { sampleHydrology, regionalHeight, riverSegments } from "./watershed.js";
+export { fbm, noise } from "./terrain-noise.js";
+export { sampleHydrology, regionalHeight } from "./watershed.js";
 export const TERRAIN_SIZE = 4000;
-function hash(x, z) {
-  let n = Math.imul(x, 374761393) + Math.imul(z, 668265263);
-  n = Math.imul(n ^ (n >>> 13), 1274126177);
-  return ((n ^ (n >>> 16)) >>> 0) / 4294967295;
-}
-export function noise(x, z) {
-  const a = Math.floor(x),
-    b = Math.floor(z),
-    u = x - a,
-    v = z - b,
-    s = u * u * (3 - 2 * u),
-    t = v * v * (3 - 2 * v);
-  return (
-    (hash(a, b) * (1 - s) + hash(a + 1, b) * s) * (1 - t) +
-    (hash(a, b + 1) * (1 - s) + hash(a + 1, b + 1) * s) * t
-  );
-}
-export function fbm(x, z) {
-  let a = 1,
-    f = 0,
-    sum = 0;
-  for (let k = 0; k < 5; k++) {
-    f += noise(x, z) * a;
-    sum += a;
-    a *= 0.48;
-    x = x * 2.03 + 17;
-    z = z * 2.03 - 13;
-  }
-  return f / sum;
-}
-// Connected landscape fields: woodland stands, dry uplands and a descending river corridor.
+const water = {};
+// Compatibility for named river viewpoints only. Physical consumers use the
+// indexed network rather than assuming a river is a function of z.
 export function riverCenter(z) {
-  return -260 + 115 * Math.sin(z * 0.0019) + 38 * Math.sin(z * 0.0061);
+  let best = Infinity,
+    x = -280;
+  for (const s of riverSegments) {
+    if (s.area < 1500000) continue;
+    const t = Math.max(0, Math.min(1, (z - s.az) / (s.bz - s.az || 1)));
+    const d = Math.abs(z - (s.az + (s.bz - s.az) * t));
+    if (d < best) {
+      best = d;
+      x = s.ax + (s.bx - s.ax) * t;
+    }
+  }
+  return x;
 }
 export function riverLevel(z) {
-  return -3 + (z + TERRAIN_SIZE / 2) * 0.0018;
+  return sampleHydrology(riverCenter(z), z, water).level;
 }
 export function landscape(x, z) {
-  const riverDistance = Math.abs(x - riverCenter(z));
-  const forest = fbm(x * 0.0028 + 140, z * 0.0028 - 70);
-  let clump = 0;
-  const gx = Math.floor(x / 70),
-    gz = Math.floor(z / 70);
-  for (let dz = -1; dz <= 1; dz++)
-    for (let dx = -1; dx <= 1; dx++) {
-      const cx = gx + dx,
-        cz = gz + dz,
-        px = (cx + hash(cx, cz)) * 70,
-        pz = (cz + hash(cx + 31, cz - 19)) * 70,
-        r = 12 + hash(cx - 21, cz + 70) * 22;
-      clump = Math.max(
-        clump,
-        Math.exp(-((x - px) ** 2 + (z - pz) ** 2) / (2 * r * r)),
-      );
-    }
-  const upland = fbm(x * 0.0011 - 30, z * 0.0011 + 60);
+  sampleHydrology(x, z, water);
+  const elevation = regionalHeight(x, z);
+  const region = fbm(x * 0.00085 + 140, z * 0.00085 - 70);
+  const shelter = 1 - Math.min(1, elevation / 570);
+  const meadow =
+    Math.max(0, 1 - Math.abs(x + 160) / 620) *
+    Math.max(0, (noise(x * 0.0014 + 90, z * 0.0014 - 30) - 0.35) * 2);
+  const forest = Math.max(
+    0,
+    Math.min(
+      1,
+      (region - 0.29) * 2.6 +
+        shelter * 0.16 +
+        water.wetness * 0.18 -
+        meadow * 0.8,
+    ),
+  );
   return {
-    riverDistance,
-    clump,
-    forest: Math.max(0, Math.min(1, (forest - 0.39) * 3.8)),
-    upland,
-    wetness: Math.exp(-riverDistance / 40),
+    // Worker terrain grids interpolate this channel: Infinity * 0 would become
+    // NaN on cell edges and suppress all upland grass away from indexed rivers.
+    riverDistance: Math.min(10000, water.distance) - water.width + 8,
+    clump: 0.58 + 0.42 * noise(x * 0.013 + 3, z * 0.013 - 6),
+    forest,
+    upland: Math.min(1, elevation / 470),
+    wetness: water.wetness,
   };
 }

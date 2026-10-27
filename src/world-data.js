@@ -7,7 +7,7 @@ import {
 } from "./terrain-field.js";
 import { TREE_TYPES } from "./plant-catalog.js";
 import { patchNoise, woodlandHabitat } from "./habitat.js";
-export const WORLD_VERSION = "woodland-16km-road-verges-17";
+export const WORLD_VERSION = "watershed-woodland-18";
 export function random(seed) {
   return () => {
     seed |= 0;
@@ -30,7 +30,7 @@ export function makeWorld() {
       const x = (cx - 15.5) * (TERRAIN_SIZE / 32),
         z = (cz - 15.5) * (TERRAIN_SIZE / 32),
         items = [];
-      for (let j = 0; j < 384; j++) {
+      for (let j = 0; j < 768; j++) {
         const tx = x + (rng() - 0.5) * (TERRAIN_SIZE / 32),
           tz = z + (rng() - 0.5) * (TERRAIN_SIZE / 32),
           s = terrainSample(tx, tz);
@@ -39,18 +39,12 @@ export function makeWorld() {
         // Coherent forest cores and edges, with sparse individual trees on open hills.
         const wood = woodlandHabitat(tx, tz, s);
         const suitability =
-          wood.core * (0.35 + s.clump * 0.65) * (1 - Math.min(0.7, s.slope));
+          wood.core * (0.7 + s.clump * 0.3) * (1 - Math.min(0.7, s.slope));
         // Mature stands, regeneration gaps and genuinely open hills share one field.
         if (rng() > 0.005 + 0.92 * suitability ** 1.45 + s.wetness * 0.1)
           continue;
         const gx = Math.floor(tx / 4),
           gz = Math.floor(tz / 4);
-        let crowded = false;
-        for (let dz = -1; dz <= 1; dz++)
-          for (let dx = -1; dx <= 1; dx++)
-            for (const p of occupied.get(`${gx + dx},${gz + dz}`) || [])
-              if (Math.hypot(tx - p.x, tz - p.z) < 3.3) crowded = true;
-        if (crowded) continue;
         const grove = patchNoise(tx * 0.006, tz * 0.006, 281);
         const species =
           s.wetness > 0.3
@@ -89,6 +83,21 @@ export function makeWorld() {
           variant: age * TREE_TYPES.length + species,
           seed: Math.floor(rng() * 1e6),
         };
+        // Mature crowns compete for more space; young trees can occupy smaller
+        // gaps. Store the radius in the index so the test is symmetric.
+        const spacing = [1.7, 3.5, 4.8][age] * t.scale;
+        let crowded = false;
+        for (let dz = -2; dz <= 2; dz++)
+          for (let dx = -2; dx <= 2; dx++) {
+            for (const p of occupied.get(`${gx + dx},${gz + dz}`) || []) {
+              if (Math.hypot(tx - p.x, tz - p.z) < (spacing + p.spacing) * 0.5)
+                crowded = true;
+            }
+          }
+        if (crowded) continue;
+        t.spacing = spacing;
+        t.ageClass = age;
+        t.dbh = [0.08, 0.32, 0.65][age] * t.scale;
         if (age > 0 && wood.stand > 0.5 && s.slope < 0.25 && rng() < 0.026) {
           deadwood.push({
             ...t,

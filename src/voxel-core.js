@@ -1,6 +1,6 @@
 import { GRASS_TYPES, TREE_TYPES } from "./plant-catalog.js";
 import { Vector3 } from "three/src/math/Vector3.js";
-import { riverCenter, riverLevel } from "./terrain-math.js";
+import { sampleHydrology } from "./watershed.js";
 import { treeTint } from "./plant-appearance.js";
 function* voxelDetailChunks(world, n, min, size, grassRecords) {
   const ny = n / 2,
@@ -201,13 +201,14 @@ function* voxelDetailChunks(world, n, min, size, grassRecords) {
         counts.branches++;
       }
   }
+  const waterSample = {};
   for (let z = 0; z < n; z++)
     for (let x = 0; x < n; x++) {
       const wx = min.x + (x + 0.5) * cell[0],
         wz = min.z + (z + 0.5) * cell[2];
-      if (Math.abs(wx - riverCenter(wz)) < 7) {
+      if (sampleHydrology(wx, wz, waterSample).distance < waterSample.width) {
         stamp(
-          [wx, riverLevel(wz), wz],
+          [wx, waterSample.level, wz],
           [cell[0] / 2, 0.2, cell[2] / 2],
           [0.12, 0.24, 0.2],
           0.08,

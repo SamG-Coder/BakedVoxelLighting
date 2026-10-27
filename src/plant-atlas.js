@@ -2,7 +2,7 @@ import * as T from "three/webgpu";
 import { packPlantAtlas } from "./atlas-mips.js";
 import { GRASS_TYPES, PLANT_REVISION } from "./plant-catalog.js";
 export async function bakePlantAtlas(assets, cache, identity) {
-  const key = "grass-palette:" + PLANT_REVISION + ":" + identity;
+  const key = "grass-palette-grid-v2:" + PLANT_REVISION + ":" + identity;
   let levels = await cache.get(key);
   if (!levels) {
     levels = await packPlantAtlas(

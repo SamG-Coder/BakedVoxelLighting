@@ -10,6 +10,9 @@ export const GRASS_TYPES = [
   { name: "clover", height: [0.18, 0.38], width: [0.55, 0.9] },
   { name: "flowers-yellow", height: [0.45, 0.85], width: [0.65, 1.05] },
   { name: "flowers-purple", height: [0.65, 1.15], width: [0.65, 1.05] },
+  { name: "fern", height: [0.4, 0.95], width: [0.75, 1.3] },
+  { name: "bracken", height: [0.65, 1.35], width: [0.9, 1.55] },
+  { name: "wild-strawberry", height: [0.12, 0.3], width: [0.35, 0.7] },
 ];
 export const GRASS_COUNT = 3900;
 export const GRASS_PATCH = {
@@ -19,10 +22,10 @@ export const GRASS_PATCH = {
   count: 190,
 };
 export const GRASS_LOD_DISTANCES = [45, 110, 280];
-export const PLANT_REVISION = "woodland-habitat-moss-v6";
+export const PLANT_REVISION = "watershed-understory-v8";
 export const GRASS_MIXES = [
-  [0.25, 0.43, 0.04, 0.025, 0.21, 0.03, 0.015],
-  [0.15, 0.2, 0.38, 0.22, 0.03, 0.015, 0.005],
-  [0.16, 0.3, 0.06, 0.03, 0.13, 0.2, 0.12],
-  [0.27, 0.08, 0.01, 0.02, 0.6, 0.01, 0.01],
+  [0.25, 0.43, 0.04, 0.025, 0.21, 0.03, 0.015, 0, 0, 0],
+  [0.15, 0.2, 0.38, 0.22, 0.03, 0.015, 0.005, 0, 0, 0],
+  [0.16, 0.3, 0.06, 0.03, 0.13, 0.2, 0.12, 0, 0, 0],
+  [0.06, 0.02, 0, 0.15, 0.07, 0, 0, 0.3, 0.18, 0.22],
 ];

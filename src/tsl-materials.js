@@ -34,17 +34,25 @@ const yawNode = () =>
     })(),
   );
 const rotate = (v, a) => K.rotatePlant({ v, a });
-export const grassAtlasUV = (count) =>
-  N.varying(
+export const grassAtlasUV = (count) => {
+  const columns = Math.min(4, count),
+    rows = Math.ceil(count / columns);
+  const type = N.attribute("plantType", "float");
+  return N.varying(
     N.vec2(
       N.uv()
         .x.mul(1 - 2 / 1024)
         .add(1 / 1024)
-        .add(N.attribute("plantType", "float"))
-        .div(count),
-      N.uv().y,
+        .add(type.mod(columns))
+        .div(columns),
+      N.uv()
+        .y.mul(1 - 2 / 1024)
+        .add(1 / 1024)
+        .add(type.div(columns).floor())
+        .div(rows),
     ),
   );
+};
 export function sampleVolume(U, name, p, fallback) {
   const map = texRef(U, name);
   const flipY = N.uniform(0).onRenderUpdate(() =>
@@ -170,12 +178,14 @@ function createDecorated(original, options, U, grid) {
   m.userData.grassAtlas = grassAtlas;
   if (wind)
     m.positionNode = N.Fn((builder) => {
-      const id = (builder.object.isInstancedMesh || builder.object.isAttributeInstances)
-        ? N.float(N.instanceIndex)
-        : N.float(0);
-      const anchor = (builder.object.isInstancedMesh || builder.object.isAttributeInstances)
-        ? N.modelWorldMatrix.mul(instanceMatrix().element(3)).xyz
-        : N.modelWorldMatrix.element(3).xyz;
+      const id =
+        builder.object.isInstancedMesh || builder.object.isAttributeInstances
+          ? N.float(N.instanceIndex)
+          : N.float(0);
+      const anchor =
+        builder.object.isInstancedMesh || builder.object.isAttributeInstances
+          ? N.modelWorldMatrix.mul(instanceMatrix().element(3)).xyz
+          : N.modelWorldMatrix.element(3).xyz;
       return K.windPosition({
         p: N.positionLocal,
         t: ref(U, "time"),
