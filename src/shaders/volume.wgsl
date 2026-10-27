@@ -49,6 +49,6 @@ fn volumeBake(uv: vec2f, dims: vec3f, origin: vec3f, extent: vec3f, terrain: tex
         visibility[ray]=tr;
     }
     let transport=textureSampleLevel(transportMap,linearSampler,uv,0.);
-    let indirect=(vec3f(.035,.055,.085)*(.15+transport.a*.85)+transport.rgb*sunColour*.8)*(.04+.96*daylight)+lampColour*power/(10.+dist*dist)*visibility.y*.14;
+    let indirect=(vec3f(.085,.115,.16)*(.15+transport.a*.85)+transport.rgb*sunColour*.8)*daylight+(vec3f(.035,.055,.085)*(.15+transport.a*.85)+transport.rgb*sunColour*.8)*(.04*(1.-daylight))+lampColour*power/(10.+dist*dist)*visibility.y*.14;
     return vec4f(indirect,visibility.x);
 }

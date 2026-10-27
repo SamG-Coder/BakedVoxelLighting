@@ -7,6 +7,7 @@ import { createNightWorld } from "./night-world.js";
 import { buildDeadwood } from "./deadwood.js";
 import deadwoodSource from "./deadwood-data.js?raw";
 import { PreparedSunShadow, ResidentPointShadow } from "./prepared-shadows.js";
+import { sunShadowFilter } from "./sun-shadow-filter.js";
 import { getGPUUploads } from "./gpu-uploads.js";
 import {
   prepareForRender,
@@ -247,6 +248,7 @@ const sun = new VoxelSun(0xffe6be, 2.6),
 sun.castShadow = true;
 const preparedSunShadow = new PreparedSunShadow(sun);
 sun.shadow.shadowNode = preparedSunShadow;
+sun.shadow.filterNode = sunShadowFilter;
 sun.shadow.autoUpdate = false;
 let lastSunShadowUpdate = -Infinity;
 sun.shadow.mapSize.set(2048, 2048);

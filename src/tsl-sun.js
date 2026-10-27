@@ -21,9 +21,17 @@ export function installVoxelSun(renderer, uniforms) {
           uniforms,
           N.positionWorld.add(N.vec3(0, 1.2, 0)),
         ).a;
-        direct.lightColor = direct.lightColor.mul(
-          N.mix(1, visibility, ref(uniforms, "bakedEnabled")),
-        );
+        const baked = N.mix(1, visibility, ref(uniforms, "bakedEnabled"));
+        // Both representations contain the same trees. Multiplication squares
+        // partial visibility and turns dappled shade into a dark blanket.
+        // Keep the more occluded representation without counting it twice.
+        const mapped =
+          builder.object.receiveShadow &&
+          builder.renderer.shadowMap.enabled &&
+          this.shadowNode;
+        direct.lightColor = mapped
+          ? this.baseColorNode.mul(N.min(this.shadowNode, baked))
+          : direct.lightColor.mul(baked);
       }
       direct.lightColor = direct.lightColor.mul(
         N.float(1).sub(

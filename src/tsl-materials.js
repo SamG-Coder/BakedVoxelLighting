@@ -6,6 +6,11 @@ import * as N from "three/tsl";
 import { ref, texRef, terrainNode } from "./tsl-baking.js";
 import { attributeInstanceMatrix } from "./attribute-instances.js";
 import { rootConformPosition } from "./root-conform.js";
+import {
+  surfaceCoordinates,
+  variedSurface,
+  atlasSurfaceCoordinates,
+} from "./surface-variation.js";
 const matrices = new WeakMap();
 const instanceMatrix = N.Fn((builder) => {
   if (builder.object.isAttributeInstances) return attributeInstanceMatrix();
@@ -35,14 +40,27 @@ const yawNode = () =>
     })(),
   );
 const rotate = (v, a) => K.rotatePlant({ v, a });
-export const grassAtlasUV = (count) => {
+const grassMirror = () =>
+  N.varying(
+    N.Fn(() => {
+      // Height is stable through thinning and periodic copies used by the bake.
+      const seed = N.length(instanceMatrix().element(1).xyz);
+      return N.step(0.5, N.fract(N.sin(seed.mul(127.1)).mul(43758.5453)))
+        .mul(2)
+        .sub(1);
+    })(),
+  );
+export const grassAtlasUV = (count, mirror = grassMirror()) => {
   const columns = Math.min(4, count),
     rows = Math.ceil(count / columns);
   const type = N.attribute("plantType", "float");
   return N.varying(
     N.vec2(
       N.uv()
-        .x.mul(1 - 2 / 1024)
+        .x.sub(0.5)
+        .mul(mirror)
+        .add(0.5)
+        .mul(1 - 2 / 1024)
         .add(1 / 1024)
         .add(type.mod(columns))
         .div(columns),
@@ -78,13 +96,22 @@ export function distantSkyVisibility(U, p) {
 }
 export function distantRadiance(U, p) {
   const sky = distantSkyVisibility(U, p);
-  const ambient = N.vec3(0.035, 0.055, 0.085).mul(sky.mul(0.85).add(0.15));
+  const ambient = N.vec3(0.085, 0.115, 0.16).mul(sky.mul(0.85).add(0.15));
   const bounce = N.vec3(0.012, 0.018, 0.008)
     .mul(N.float(1).sub(sky))
     .mul(ref(U, "sunColour", "vec3"))
     .mul(0.8);
   return N.vec4(
-    ambient.add(bounce).mul(ref(U, "daylight").mul(0.96).add(0.04)),
+    // Daylight fill comes from sky visibility; retain the previous night floor.
+    ambient
+      .add(bounce)
+      .mul(ref(U, "daylight"))
+      .add(
+        N.vec3(0.035, 0.055, 0.085)
+          .mul(sky.mul(0.85).add(0.15))
+          .add(bounce)
+          .mul(N.float(1).sub(ref(U, "daylight")).mul(0.04)),
+      ),
     sky,
   );
 }
@@ -219,14 +246,9 @@ function createDecorated(original, options, U, grid) {
     const p = N.positionWorld,
       land = terrainNode(U.terrainField.value, p.xz, grid),
       guv = p.xz.mul(0.72);
-    const soil = N.texture(m.map, guv).setUpdateMatrix(false).rgb,
-      lush = N.mix(
-        texRef(U, "groundMap").sample(guv).setUpdateMatrix(false).rgb,
-        texRef(U, "groundMap")
-          .sample(N.vec2(guv.y.negate(), guv.x).mul(0.73).add(17.31))
-          .setUpdateMatrix(false).rgb,
-        0.3,
-      ),
+    const coordinates = surfaceCoordinates(guv, p.xz);
+    const soil = variedSurface(N.texture(m.map), coordinates).rgb,
+      lush = variedSurface(texRef(U, "groundMap"), coordinates).rgb,
       // The baked dry habitat carries its actual seed-grass textures. Reuse
       // the fine ground detail underneath it to stay within 16 GPU samplers.
       dry = lush.mul(N.vec3(1.12, 0.94, 0.78));
@@ -239,21 +261,16 @@ function createDecorated(original, options, U, grid) {
         .add(0.5)
         .div(grid),
     );
-    const stone = texRef(U, "rockMap")
-      .sample(guv.mul(0.5))
-      .setUpdateMatrix(false).rgb;
+    const stone = variedSurface(
+      texRef(U, "rockMap"),
+      surfaceCoordinates(guv.mul(0.5), p.xz),
+    ).rgb;
     const cover = texRef(U, "grassGround").sample(p.xz.add(2000).div(4000));
     const habitat = texRef(U, "grassHabitat").sample(p.xz.add(2000).div(4000));
-    const tiled = N.fract(N.vec2(p.x, p.z.negate()).div(4));
-    // Half a texel of inset isolates habitats in every generated mip level.
-    const patchUV = (k) =>
-      N.vec2(
-        tiled.x
-          .mul(1 - 2 / 512)
-          .add(1 / 512 + k)
-          .div(GRASS_MIXES.length),
-        tiled.y.mul(1 - 2 / 512).add(1 / 512),
-      );
+    const patchCoordinates = surfaceCoordinates(
+      N.vec2(p.x, p.z.negate()).div(4),
+      p.xz,
+    );
     let forestFloor = N.vec3(0);
     let surface = N.vec3(0),
       mean = N.vec3(0),
@@ -261,11 +278,15 @@ function createDecorated(original, options, U, grid) {
     for (let k = 0; k < GRASS_MIXES.length; k++) {
       const weight = habitat.element(k),
         map = texRef(U, "grassSurface");
-      if (k === 3)
-        forestFloor = map.sample(patchUV(k)).setUpdateMatrix(false).rgb;
-      surface = surface.add(
-        map.sample(patchUV(k)).setUpdateMatrix(false).rgb.mul(weight),
+      const patch = atlasSurfaceCoordinates(
+        patchCoordinates,
+        k,
+        GRASS_MIXES.length,
+        512,
       );
+      const patchColour = variedSurface(map, patch).rgb;
+      if (k === 3) forestFloor = patchColour;
+      surface = surface.add(patchColour.mul(weight));
       mean = mean.add(
         map
           .sample(N.vec2((k + 0.5) / GRASS_MIXES.length, 0.5))
@@ -273,8 +294,7 @@ function createDecorated(original, options, U, grid) {
           .rgb.mul(weight),
       );
       normal = normal.add(
-        texRef(U, "grassSurfaceNormal")
-          .sample(patchUV(k))
+        variedSurface(texRef(U, "grassSurfaceNormal"), patch)
           .rgb.mul(2)
           .sub(1)
           .mul(weight),
@@ -298,7 +318,7 @@ function createDecorated(original, options, U, grid) {
       woodland: habitat.a,
     });
     m.normalNode = N.normalMap(
-      N.texture(m.normalMap, guv).setUpdateMatrix(false),
+      variedSurface(N.texture(m.normalMap), coordinates),
       N.vec2(m.normalScale.x, m.normalScale.y),
     );
     const canopy = normal.normalize();
@@ -311,14 +331,18 @@ function createDecorated(original, options, U, grid) {
     base = m.colorNode;
   }
   if (grass) {
-    const uv = grassAtlas ? grassAtlasUV(grassAtlas) : N.uv();
+    const mirror = grassAtlas ? grassMirror() : N.float(1);
+    const uv = grassAtlas ? grassAtlasUV(grassAtlas, mirror) : N.uv();
     if (grassAtlas) {
       const tex = N.texture(m.map, uv);
       m.colorNode = tex.rgb;
       m.opacityNode = tex.a;
       m.maskNode = tex.a.greaterThan(m.alphaTest);
     }
-    const detail = N.texture(m.normalMap, uv).xyz.mul(2).sub(1);
+    const detail = N.texture(m.normalMap, uv)
+      .xyz.mul(2)
+      .sub(1)
+      .mul(N.vec3(mirror, 1, 1));
     const wn = K.grassNormal({ detail, yaw: yawNode() });
     m.normalNode = N.normalize(N.cameraViewMatrix.mul(N.vec4(wn, 0)).xyz);
   }

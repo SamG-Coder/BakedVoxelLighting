@@ -769,7 +769,7 @@ export async function bakeGrassLOD(
       256,
       8,
       cache,
-      "grass-surface-tapered-v1:" + identity + ":" + k,
+      "grass-surface-mirrored-v2:" + identity + ":" + k,
       { grassPatch: true },
     );
     grass.templates.push(atlas);
@@ -987,7 +987,7 @@ export function updateShrubs(items, camera, scene) {
 // Orthographic canopy captures use the same bent cards, colours and represented
 // normals as the nearby meadow. Wrapped copies make each four-metre tile seamless.
 async function bakeGrassSurface(renderer, cache, identity, assets) {
-  const key = "grass-ground-surface:" + identity;
+  const key = "grass-ground-surface-mirrored-v2:" + identity;
   let record = await cache.get(key);
   if (!record) {
     const size = 512,
