@@ -50,6 +50,19 @@ export function grassColour(habitat) {
     ]
   );
 }
+// Capture reusable material colour, then apply local habitat colour exactly once
+// at every distance. A coloured reference bake cannot be corrected by a scalar.
+export function grassBakeHabitat(index) {
+  return {
+    weights: GRASS_MIXES[index],
+    density: 1,
+    height: 1,
+    tint: 1,
+    colour: [1, 1, 1],
+    dry: index === 1 ? 0.6 : 0.15,
+    flow: index * 0.8,
+  };
+}
 export function grassHabitat(x, z, land) {
   const wood = woodlandHabitat(x, z, land);
   // Elongated, warped patches are modulated by water and canopy, rather than

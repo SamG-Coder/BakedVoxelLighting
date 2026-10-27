@@ -96,7 +96,7 @@ export function generateGrassBatches({ x, z, seed, level, land }) {
         zz,
         1,
       );
-      b.colours.push(...grassColour(h).map((v) => v / 0.96));
+      b.colours.push(...grassColour(h));
     }
   } else {
     for (const p of grassPopulation(x, z, seed, GRASS_COUNT, 24, sample)) {

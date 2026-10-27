@@ -10,6 +10,7 @@ import {
   grassHabitat,
   grassPopulation,
   grassColour,
+  grassBakeHabitat,
   woodlandHabitat,
   patchNoise,
 } from "./habitat.js";
@@ -710,14 +711,7 @@ export async function bakeGrassLOD(
   for (let k = 0; k < GRASS_MIXES.length; k++) {
     const batch = { matrices: [], colours: [], types: [] },
       source = new T.Group();
-    const habitat = {
-      weights: GRASS_MIXES[k],
-      density: 1,
-      height: 1,
-      tint: 0.96,
-      dry: k === 1 ? 0.6 : 0.15,
-      flow: k * 0.8,
-    };
+    const habitat = grassBakeHabitat(k);
     const sample = () => ({
       height: 0,
       traffic: 0,
@@ -996,14 +990,7 @@ async function bakeGrassSurface(renderer, cache, identity, assets) {
     for (let k = 0; k < GRASS_MIXES.length; k++) {
       const source = new T.Group(),
         batch = { matrices: [], colours: [], types: [] };
-      const habitat = {
-        weights: GRASS_MIXES[k],
-        density: 1,
-        height: 1,
-        tint: 0.96,
-        dry: k === 1 ? 0.6 : 0.15,
-        flow: k * 0.8,
-      };
+      const habitat = grassBakeHabitat(k);
       const sample = () => ({
         height: 0,
         traffic: 0,
@@ -1181,6 +1168,14 @@ async function bakeGrassSurface(renderer, cache, identity, assets) {
     resolution: 512,
     habitats: GRASS_MIXES.length,
     mips: record.mips.length,
+    // The isolated final mip contains the linear mean of each actual canopy
+    // capture, including visible blade area, litter and the gaps between plants.
+    meanColours: Array.from({ length: GRASS_MIXES.length }, (_, k) =>
+      Array.from(
+        record.mips.at(-1).data.subarray(k * 4, k * 4 + 3),
+        (v) => v / 255,
+      ),
+    ),
   };
 }
 
@@ -1208,9 +1203,8 @@ export async function bakeGrassGround(renderer, cache, identity, assets) {
               (1 - T.MathUtils.smoothstep(land.root, 0.12, 0.78) * 0.94);
         for (let c = 0; c < 3; c++) {
           let mean = 0;
-          for (let k = 0; k < GRASS_TYPES.length; k++)
-            mean +=
-              assets[GRASS_TYPES[k].name].profile.colour[c] * h.weights[k];
+          for (let k = 0; k < GRASS_MIXES.length; k++)
+            mean += surface.meanColours[k][c] * h.mixes[k];
           const tint = grassColour(h)[c];
           data[i + c] = Math.min(255, Math.round(255 * mean * tint));
         }

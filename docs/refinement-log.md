@@ -2,6 +2,29 @@
 
 This is a working good/bad list, updated from rendered checks and measurements. A stationary 60 FPS reading is not an acceptance test for streaming. Target: natural appearance at the existing quality settings with smooth 60 FPS traversal.
 
+## 2026-10-28: vegetation colour and material continuity
+
+This is the first distance-consistency step of the visual plan. The source plant population, tree geometry, LOD ranges, atlas dimensions and default MSAA setting are retained.
+
+- Merged forest HLODs now decode normal alpha as the same signed foliage/moss payload as individual tree HLODs. Previously the merged material treated it as unsigned leaf transmission, so even bare bark could acquire a foliage response at a merge.
+- Grass patch materials are classified from the capture's `grassPatch` flag, not from a transmission-strength threshold. Their roughness, radiance offset and root AO now use the grass response. Already-captured normals remain in source/world space; the whole colony is not reinterpreted as one grass blade.
+- Patch and ground-cover captures use neutral RGB tint. Local habitat RGB is applied once, removing the former scalar `/0.96` correction that left the reference bake's unequal green/blue multipliers behind.
+- Distant ground colour comes from the isolated final mip of the actual four top-down habitat captures, instead of an instance-count-weighted average of unrelated source-image colour profiles. Geometry patches and the ground still approximate local habitat mixtures; this is not exact per-tile geometry capture.
+- Initial source-atlas packing now filters sRGB colours in linear light, weighted by alpha. A shared 256-entry decode table also replaces repeated decode powers in mip reduction. Transparent RGB does not contaminate visible blades. RGB quantization rounds rather than truncates, so constant colours do not lose brightness at each successive mip.
+- Coverage adjustment leaves a mip unchanged when its silhouette already matches the reference within half a texel. Previously a fully opaque mip was scaled down to just above the cutoff, losing MSAA sample coverage. Normal/material alpha remains independent of silhouette alpha.
+
+All changes reuse existing textures and draw layouts. Baking/source hashes include the changed files, so cached source mips, habitat captures and streamed grass data refresh automatically. No extra runtime texture binding, render pass or frame-loop allocation was introduced.
+
+Validation: `verify-lod-colour.mjs` checks opaque mip coverage, linear source packing (50% black/white encodes to sRGB 188 rather than 128), transparent-edge colour, all four neutral habitat captures, and 473 actual generated patch tints. Habitat tests retain the golden original grass population fingerprint. Tree surface, mip/material payload, streaming (7), handoff (14), shader-budget and visual-pipeline checks pass, along with ordinary and Pages builds. No Actions tests were added.
+
+WebGPU loaded the corrected scene without captured errors. The live material audit found 991 merged tree meshes, 7,854 individual tree-impostor meshes and 1,730 prepared grass-patch meshes with the expected material flags; all four grass atlases retain nine mip levels. These are resident/prepared objects, not simultaneous draw counts. Matching noon meadow screenshots retain dense near grass; night was checked after traversal. Evidence: `evidence/lod-consistency-before.png`, `lod-consistency-after.png`, `lod-consistency-night.png`, `lod-materials-webgpu.json`.
+
+The same approximately 290 m / 20 s route at 1280x720 measured 16.7 ms median and 33.4 ms p95/p99 both before and after. Maximum interval was 50.1 ms before and 66.7 ms after; frame counts were 1,056 and 1,021. The changed bake identities caused new streamed bakes in the after run. This does not establish a speedup, no-regression guarantee, or smooth 60 FPS. Long-session memory and existing streaming hitches remain separate work. Geometric silhouette changes, local species adjustments within the four habitat mixtures, and coarse distant illumination remain approximations; this pass does not finish the wider visual roadmap.
+
+An independent run of the old and new worker confirms opaque alpha `[255,82,82,82,82,82]` becomes `[255,255,255,255,255,255]`, constant-white RGB `[255,254,253,252,251,251]` stays 255 at every level, and the black/white packing sample changes from 127 to 188. After the final quantization correction, the repeated WebGPU route rendered 1,019 frames with 16.7 ms median, 33.4 ms p95/p99 and 66.7 ms maximum, without captured errors. Evidence: `evidence/lod-filtering-comparison.json`, `lod-consistency-final.json`.
+
+WebGL2 also reached ready without captured errors and passed the live material audit (991 merged tree meshes, 7,854 individual impostors, 1,736 prepared grass-patch meshes). The observed 23-26 FPS is compatibility evidence, not a performance pass. Evidence: `evidence/lod-materials-webgl2.json`, `lod-consistency-webgl2.png`.
+
 ## 2026-10-28: native temporal-AA preview
 
 Performance correction 74cf149 was committed, pushed, and its Pages deployment succeeded before continuing AA work. MSAA remains the default. A selector now exposes the native `?aa=taa` preview and retains `?aa=taau` for comparison.

@@ -228,7 +228,7 @@ export function atlasMaterial(atlas, transmission = 0.32) {
       side: T.DoubleSide,
       roughness: 1,
     }),
-    { transmission, grass: transmission > 0.4, surfacePayload: true },
+    { transmission, grass: !!atlas.record.grassPatch, surfacePayload: true },
   );
   billboardTSL(material, atlas.record);
   atlasTemplates.set(atlas, material);

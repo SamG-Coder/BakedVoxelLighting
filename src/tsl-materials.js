@@ -380,7 +380,7 @@ function createDecorated(original, options, U, grid) {
       groundInfluence.b.mul(N.float(1).sub(groundInfluence.a)),
     );
   }
-  if (grass) {
+  if (grass && !surfacePayload) {
     const mirror = grassAtlas ? grassMirror() : N.float(1);
     const uv = grassAtlas ? grassAtlasUV(grassAtlas, mirror) : N.uv();
     if (grassAtlas) {
@@ -407,6 +407,10 @@ function createDecorated(original, options, U, grid) {
     // Retain gentle root occlusion without a directional card-shaped seam.
     m.aoNode = N.mix(0.8, 1, N.smoothstep(0.02, 0.7, N.uv().y));
   }
+  // A captured colony already contains represented world-space blade normals.
+  // Retain the grass response without treating the whole colony as one blade.
+  if (grass && surfacePayload)
+    m.aoNode = N.mix(0.8, 1, N.smoothstep(0.02, 0.7, N.uv().y));
   const bake = (p) => sampleRadiance(U, p);
   const bent = sampleVolume(
     U,

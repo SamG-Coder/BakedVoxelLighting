@@ -1,4 +1,15 @@
 // Each frame is reduced independently: no colour/alpha bleeding between views.
+// Source PNGs are sRGB. Decode before both resampling and mip reduction; doing
+// the initial pack in sRGB permanently darkens fine blades before mips exist.
+const linearBytes = Float32Array.from({ length: 256 }, (_, v) =>
+  v / 255 <= 0.04045
+    ? v / 12.92
+    : 255 * Math.pow((v / 255 + 0.055) / 1.055, 2.4),
+);
+const encodeSRGB = (v) =>
+  v / 255 <= 0.0031308
+    ? v * 12.92
+    : 255 * (1.055 * Math.pow(v / 255, 1 / 2.4) - 0.055);
 self.onmessage = ({ data: { id, record, sources, tileSize } }) => {
   const plantColumns = sources ? Math.min(4, sources.length) : 0;
   if (sources) {
@@ -35,18 +46,18 @@ self.onmessage = ({ data: { id, record, sources, tileSize } }) => {
               const a =
                 source.data[i + 3] * (dx ? u : 1 - u) * (dy ? v : 1 - v);
               alpha += a;
-              r += source.data[i] * a;
-              g += source.data[i + 1] * a;
-              b += source.data[i + 2] * a;
+              r += linearBytes[source.data[i]] * a;
+              g += linearBytes[source.data[i + 1]] * a;
+              b += linearBytes[source.data[i + 2]] * a;
               nx += (source.normals[i] / 127.5 - 1) * a;
               ny += (source.normals[i + 1] / 127.5 - 1) * a;
               nz += (source.normals[i + 2] / 127.5 - 1) * a;
               response += source.normals[i + 3] * a;
             }
           if (alpha) {
-            data[o] = r / alpha;
-            data[o + 1] = g / alpha;
-            data[o + 2] = b / alpha;
+            data[o] = Math.round(encodeSRGB(r / alpha));
+            data[o + 1] = Math.round(encodeSRGB(g / alpha));
+            data[o + 2] = Math.round(encodeSRGB(b / alpha));
             const n = Math.hypot(nx, ny, nz) || 1;
             normals[o] = ((nx / n) * 0.5 + 0.5) * 255;
             normals[o + 1] = ((ny / n) * 0.5 + 0.5) * 255;
@@ -80,18 +91,8 @@ self.onmessage = ({ data: { id, record, sources, tileSize } }) => {
         if (base[(y * w + (f * w) / views + x) * 4 + 3] >= cutoff) count++;
     coverage.push(count / ((w / views) * h));
   }
-  const decode = (v) =>
-    !record.srgb
-      ? v
-      : v / 255 <= 0.04045
-        ? v / 12.92
-        : 255 * Math.pow((v / 255 + 0.055) / 1.055, 2.4);
-  const encode = (v) =>
-    !record.srgb
-      ? v
-      : v / 255 <= 0.0031308
-        ? v * 12.92
-        : 255 * (1.055 * Math.pow(v / 255, 1 / 2.4) - 0.055);
+  const decode = (v) => (record.srgb ? linearBytes[v] : v);
+  const encode = (v) => (record.srgb ? encodeSRGB(v) : v);
   let previous = levels[0],
     weights = Float32Array.from({ length: w * h }, (_, i) => base[i * 4 + 3]);
   while (previous.height > 1 || previous.width > views) {
@@ -131,9 +132,9 @@ self.onmessage = ({ data: { id, record, sources, tileSize } }) => {
               nz += (previous.normals[i + 2] / 127.5 - 1) * alpha;
             }
           if (a) {
-            data[out] = encode(r / a);
-            data[out + 1] = encode(g / a);
-            data[out + 2] = encode(b / a);
+            data[out] = Math.round(encode(r / a));
+            data[out + 1] = Math.round(encode(g / a));
+            data[out + 2] = Math.round(encode(b / a));
             const length = Math.hypot(nx, ny, nz) || 1;
             ns[out] = ((nx / length) * 0.5 + 0.5) * 255;
             ns[out + 1] = ((ny / length) * 0.5 + 0.5) * 255;
@@ -150,6 +151,16 @@ self.onmessage = ({ data: { id, record, sources, tileSize } }) => {
         }
       // Preserve projected leaf coverage at the runtime alpha cutoff.
       if (cutoff > 0) {
+        let naturalCount = 0;
+        for (let y = 0; y < height; y++)
+          for (let x = 0; x < frame; x++)
+            if (data[(y * width + f * frame + x) * 4 + 3] >= cutoff)
+              naturalCount++;
+        // Leave an already-correct mip alone. Searching for the *smallest*
+        // passing scale turns fully opaque leaves into cutoff-valued alpha,
+        // which then loses MSAA sample coverage despite identical silhouettes.
+        if (Math.abs(naturalCount - coverage[f] * frame * height) <= 0.5)
+          continue;
         let lo = 0,
           hi = 8;
         for (let it = 0; it < 12; it++) {

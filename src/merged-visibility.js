@@ -88,7 +88,9 @@ function material() {
       roughness: 1,
       vertexColors: true,
     }),
-    { transmission: 0.32 },
+    // Match individual HLODs: normal alpha is signed foliage/moss response,
+    // not the source leaf texture's unsigned transmission channel.
+    { transmission: 0.32, surfacePayload: true },
   );
   billboardTSL(m, atlas, true);
   mergedTemplate = m;
