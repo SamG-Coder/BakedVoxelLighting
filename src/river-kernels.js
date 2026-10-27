@@ -23,28 +23,26 @@ export const riverTile = nativeFunction(
 export const riverSurface = nativeFunction(
   `vec4 riverSurface(sampler2D map,vec2 coord,vec4 flow,float time,float distanceToEye){
     float phase=fract(time/6.);float other=fract(phase+.5);float blend=1.-abs(phase*2.-1.);
-    vec2 a=coord-vec2(0.,phase*6.*flow.z),b=coord-vec2(0.,other*6.*flow.z);
+    vec2 a=coord-flow.xy*(phase*6.*flow.z),b=coord-flow.xy*(other*6.*flow.z);
     vec4 broad=mix(texture(map,b*vec2(.16,.24)),texture(map,a*vec2(.16,.24)),blend);
     vec4 fine=mix(texture(map,b*vec2(.59,.71)+vec2(.37,.19)),texture(map,a*vec2(.59,.71)+vec2(.37,.19)),blend);
     float detail=1.-smoothstep(20.,180.,distanceToEye);
     vec2 slope=(broad.rg-.5)*.65+(fine.rg-.5)*.26*detail;
     slope.y+=sin(coord.y*3.8-time*flow.z*3.8+sin(coord.x*1.7))*.025*detail;
-    vec2 forward=normalize(flow.xy);vec2 right=vec2(-forward.y,forward.x);
-    vec2 horizontal=right*slope.x+forward*slope.y;
+    vec2 horizontal=slope;
     float shallow=smoothstep(.04,.18,flow.w)*(1.-smoothstep(.25,.8,flow.w));
     float foam=smoothstep(.57,.81,broad.b*.55+fine.b*.45)*shallow*.68;
     return vec4(normalize(vec3(-horizontal.x,1.,-horizontal.y-.0018)),foam);
   }`,
   `fn riverSurface(map:texture_2d<f32>,linearSampler:sampler,coord:vec2f,flow:vec4f,time:f32,distanceToEye:f32)->vec4f{
     let phase=fract(time/6.);let other=fract(phase+.5);let blend=1.-abs(phase*2.-1.);
-    let a=coord-vec2f(0.,phase*6.*flow.z);let b=coord-vec2f(0.,other*6.*flow.z);
+    let a=coord-flow.xy*(phase*6.*flow.z);let b=coord-flow.xy*(other*6.*flow.z);
     let broad=mix(textureSample(map,linearSampler,b*vec2f(.16,.24)),textureSample(map,linearSampler,a*vec2f(.16,.24)),blend);
     let fine=mix(textureSample(map,linearSampler,b*vec2f(.59,.71)+vec2f(.37,.19)),textureSample(map,linearSampler,a*vec2f(.59,.71)+vec2f(.37,.19)),blend);
     let detail=1.-smoothstep(20.,180.,distanceToEye);
     var slope=(broad.rg-vec2f(.5))*.65+(fine.rg-vec2f(.5))*.26*detail;
     slope.y+=sin(coord.y*3.8-time*flow.z*3.8+sin(coord.x*1.7))*.025*detail;
-    let forward=normalize(flow.xy);let right=vec2f(-forward.y,forward.x);
-    let horizontal=right*slope.x+forward*slope.y;
+    let horizontal=slope;
     let shallow=smoothstep(.04,.18,flow.w)*(1.-smoothstep(.25,.8,flow.w));
     let foam=smoothstep(.57,.81,broad.b*.55+fine.b*.45)*shallow*.68;
     return vec4f(normalize(vec3f(-horizontal.x,1.,-horizontal.y-.0018)),foam);

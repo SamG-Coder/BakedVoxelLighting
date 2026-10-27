@@ -16,7 +16,7 @@ This is a working good/bad list, updated from rendered checks and measurements. 
 
 1. **Streaming frame spikes and high memory.** The first 200m walk at 6m/s had 16.7ms median, 33.4ms p95, 133.4ms maximum callback interval. Reported JS memory reached 2.36GB. This is not a smooth-60-FPS result.
 2. **Riverbank transitions need more physical detail.** Shared bank masks now expose patchy soil/gravel and suppress grass at the shore at every LOD. Water geometry still makes some bends angular; erosion/deposition shapes and bank-specific stones are not implemented.
-3. **River geometry is still an approximation.** Tight confluences overlap strips; later work should triangulate junctions and add erosion/deposition detail.
+3. **River geometry is still an approximation.** The continuous-surface pass below removes overlapping strips. Bank erosion/deposition detail and deliberate road crossings remain unfinished.
 4. **Middle-distance grass clumps can read as repeated blocks.** The open-bank view exposes this more clearly than dense woodland. Patch silhouette/coverage needs a dedicated follow-up.
 5. **Forest ground can still repeat.** New understory species help, but fallen leaves, decayed wood, moss and bare patches need more spatial variation.
 6. **Distant terrain needs scrutiny.** The surrounding ring must avoid clamped voxel/ground lookup stripes and blend its material with the playable region.
@@ -90,3 +90,21 @@ Validation:
 - Production Pages build succeeds; no Actions tests added. Local evidence is in `evidence/torch-before-*` and `evidence/torch-after-*`.
 
 Current good: terrain-following roots, coherent riverbank material/grass masks, sparse purposeful lighting, retained full-detail plant assets. Current bad: streaming frame spikes and high memory, overlapping river confluences, a disconnected branch road and missing crossings, distant tree lighting mismatch, repeated middle-distance grass silhouettes. Next visual priority is a connected river/path network; the 60 FPS objective remains unresolved.
+
+## Selected improvement: continuous river surface
+
+Separate transparent strips overlapped at bends and junctions, producing dark triangular patches and doubled reflection/opacity. Water now uses one clipped global lattice, split into spatial pages. Compact local reach weights blend height and flow at junctions; world-space ripple coordinates keep the texture continuous. Dry cells are removed and the boundary follows interpolated water depth/channel coverage. The existing ripple bake, foam, shallow transparency and sky/cloud reflection remain active.
+
+- Terrain preparation builds the mesh in its worker and transfers the finished arrays. Main-thread construction attaches those arrays directly. There is no new per-frame CPU work, render pass or texture binding.
+- Water triangles: 305,519 → 185,206 (39.4% fewer). Vertex/index buffer bytes: 12,575,076 → 8,655,192 (31.2% fewer). Spatial pages: 328 → 350; this is not a draw-count reduction claim.
+- Four local Node preparation samples were 19-36 ms for strips and 278-609 ms for the new mesh. The new preparation is more expensive but now occurs before play in the terrain worker, not synchronously during scene construction. These are CPU construction samples, not browser startup or GPU timings.
+
+Validation:
+- All 2,776 duplicated page-edge vertices have exactly matching position, flow, depth and ripple coordinates.
+- At 28,644 confluence samples there is at most one surface; all tested junction centres and 4,640 channel-centre samples remain covered. Fully dry and empty networks produce no meshes.
+- An independent sample of the pictured bend found 700 doubled points before and zero after. The same WebGPU camera shows the dark triangular patch removed; the bank-level view retains ripples and shallow-water detail.
+- WebGPU 200 m walks at 6 m/s: before/after median 16.7/16.7 ms, p95 16.8/16.8 ms, p99 16.8/16.8 ms, maximum 50.0/50.1 ms; one interval above 33.4 ms in each. No measured whole-scene speedup and no guaranteed 59 FPS minimum. Streaming hitches remain.
+- River geometry, watershed, bank-material and habitat/worker-parity checks pass. Evidence lives under local ignored `evidence/river-union-*`.
+- WebGPU and WebGL2 both reached ready and rendered the continuous confluence without captured errors. WebGL2's default preview was about 48 FPS; this verifies backend correctness, not the 60 FPS target. No tests were added to Actions.
+
+Current good: continuous water joins, smaller water buffers, worker-side preparation, terrain-fitting roots, coherent bank materials and purposeful torch placement. Current bad: streaming hitches and memory remain the main performance problem; roads still need connected routes and proper water crossings; distant tree lighting and repeated grass patches remain visible. No new bitmap asset was needed to fix the geometry defect.

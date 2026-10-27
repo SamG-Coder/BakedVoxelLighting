@@ -6,6 +6,7 @@ import {
   sampleHydrology,
 } from "./terrain-math.js";
 import { bankExposure, bankGravel } from "./riverbank.js";
+import { buildRiverData } from "./river-data.js";
 export function generateTerrain() {
   const N = 2001,
     CELL = TERRAIN_SIZE / (N - 1);
@@ -342,6 +343,13 @@ export function generateTerrain() {
       0,
     ),
   };
+  const riverData = buildRiverData((x, z) =>
+    sampleGrid(
+      heights,
+      (x + TERRAIN_SIZE / 2) / CELL,
+      (z + TERRAIN_SIZE / 2) / CELL,
+    ),
+  );
   return {
     heights,
     traffic,
@@ -351,5 +359,6 @@ export function generateTerrain() {
     groundInfluence,
     routes,
     terrainStats,
+    riverData,
   };
 }

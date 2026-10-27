@@ -125,7 +125,7 @@ export function createRiverMaterial(U) {
 }
 
 export function buildRiver(scene, heightAt, U, options) {
-  const data = buildRiverData(heightAt, options);
+  const data = options?.data ?? buildRiverData(heightAt, options);
   const material = createRiverMaterial(U),
     group = new T.Group();
   group.name = "River";

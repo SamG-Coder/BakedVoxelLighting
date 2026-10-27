@@ -9,6 +9,9 @@ self.onmessage = () => {
       result.slopes.buffer,
       result.roadVerge.buffer,
       result.groundInfluence.buffer,
+      ...result.riverData.chunks.flatMap((chunk) =>
+        Object.values(chunk).map((a) => a.buffer),
+      ),
     ]);
   } catch (error) {
     self.postMessage({ error: error.message });

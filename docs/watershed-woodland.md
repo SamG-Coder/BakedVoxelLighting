@@ -16,7 +16,8 @@ The full-resolution erosion and path pass runs in `terrain-generation-worker.js`
 
 ## Rendering and assets
 
-- Water reaches are combined into 125m spatial pages. Their positions, width and scrolling phase share graph endpoints.
+- Water uses a single clipped 2m lattice, divided into 126m spatial pages. Each wet point belongs to one surface, including confluences. Compact local reach weights blend water elevation and flow; page-edge values are identical. Ripples use world coordinates and the interpolated downstream flow instead of independent strip UVs.
+- The terrain worker builds water geometry against the eroded channel bed and transfers typed buffers with the heightfield. The main thread attaches those arrays directly to geometry attributes. No water mesh generation or flow-field lookup occurs during walking.
 - River terrain retains the existing full-resolution surface, but uses one resident mesh instead of three identical LOD copies.
 - The surrounding horizon uses world-tiled materials because the playable ground-cover lookup is only valid inside the 4km square.
 - Fern, bracken and wild strawberry join the existing shared plant material. Placement exchanges species weights without increasing grass instance budgets.
@@ -28,7 +29,7 @@ The full-resolution erosion and path pass runs in `terrain-generation-worker.js`
 
 ## Deterministic seed measurements
 
-`node scripts/verify-watershed.mjs` reports 1,929 regional channel segments, 36 junctions and 36.13 km of rendered channels inside the playable square. All 1,528 tested interior channel centres are submerged (minimum measured centre depth 0.617m). Water uses 328 pages / 305,519 triangles.
+`node scripts/verify-watershed.mjs` reports 1,929 regional channel segments and 36 junctions. All 1,528 tested interior channel centres are submerged (minimum measured centre depth 0.617m). The continuous water surface uses 350 pages / 185,206 triangles and 8,655,192 bytes of vertex/index buffers, versus 328 pages / 305,519 triangles / 12,575,076 bytes for the overlapping strips. Page count increases slightly because clipping and culling use a regular spatial lattice. Reaches crossing the playable boundary are now included and their surface is clipped at the boundary.
 
 The generated population contains 146,815 trees and 1,861 fallen-wood records. One-hectare cells range from 0 to 217 trees, with 91.76 trees/ha averaged across the entire map including open ground. These are generated tree counts, not a field inventory calibrated to a diameter threshold. The age/diameter metadata is approximate. The earlier 300-600 stems/ha research target has not been imposed on every dense stand; that would require more small regeneration stems and further performance validation.
 
@@ -38,6 +39,7 @@ Run locally:
 
 - `node scripts/verify-watershed.mjs`
 - `node scripts/verify-river.mjs`
+- `node scripts/verify-river-union.mjs`
 - `node scripts/verify-riverbanks.mjs`
 - `node scripts/landscape-data.mjs`
 - `node scripts/verify-habitats.mjs`
@@ -50,7 +52,7 @@ No tests were added to GitHub Actions. Browser checks cover both graphics backen
 
 ## Limits and subsequent refinements
 
-This pass does not simulate long-term lateral river migration, bank collapse, flood deposition, lakes or soil chemistry. Roads use the existing slope/moisture cost routing, not a settlement history model. The regional horizon is terrain only and does not extend the playable forest population. River confluences share graph data, but their overlapping strips are not a watertight triangulated river network. These are explicit follow-on refinements rather than claims made for this implementation.
+This pass does not simulate long-term lateral river migration, bank collapse, flood deposition, lakes or soil chemistry. Roads use the existing slope/moisture cost routing, not a settlement history model. The regional horizon is terrain only and does not extend the playable forest population. Water is now a continuous height-field surface, but it cannot represent stacked water, waterfalls or overhangs. It retains the existing baked sky/cloud reflection estimate; screen-space scene reflections have not been added. Deliberate road crossings and disconnected branch routes remain follow-on work.
 
 ## Research basis
 

@@ -1,7 +1,12 @@
 import { sampleHydrology, regionalHeight } from "./watershed.js";
 import * as T from "three/webgpu";
 import { decorate, lightUniforms } from "./lighting.js";
-import { terrainSample, TERRAIN_SIZE, TERRAIN_GRID } from "./terrain-field.js";
+import {
+  terrainSample,
+  TERRAIN_SIZE,
+  TERRAIN_GRID,
+  riverData,
+} from "./terrain-field.js";
 import { height, random } from "./world-data.js";
 import { instanced } from "./impostors.js";
 import { buildRiver } from "./river.js";
@@ -252,7 +257,7 @@ export function buildEnvironment(scene, assets) {
     horizon.add(mesh);
   }
   scene.add(horizon);
-  const water = buildRiver(scene, height, lightUniforms);
+  const water = buildRiver(scene, height, lightUniforms, { data: riverData });
   const rng = random(607),
     sets = Array.from({ length: 6 }, () => []);
   let count = 0;

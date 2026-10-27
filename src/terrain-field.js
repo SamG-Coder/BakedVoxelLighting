@@ -45,8 +45,9 @@ const {
   groundInfluence,
   routes: generatedRoutes,
   terrainStats: generatedStats,
+  riverData,
 } = await loadTerrain();
-export { groundInfluence };
+export { groundInfluence, riverData };
 export const routes = generatedRoutes;
 export const terrainStats = generatedStats;
 export const canopyInfluence = new Float32Array(N * N);
