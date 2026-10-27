@@ -17,7 +17,7 @@
       </div>
       <span class="live"><i></i> <span id="backendLabel">THREE.JS</span></span>
     </header>
-    <main>
+    <main id="mainMenu">
       <div class="eyebrow">WORLD STUDY / 001</div>
       <h2>Light that<br />stays.</h2>
       <p class="intro">
@@ -25,80 +25,277 @@
         remembered here.
       </p>
       <div class="actions">
-        <button id="explore">Explore world <span>↗</span></button
-        ><button id="fly" class="secondary">Fly</button
-        ><button id="view" class="secondary">Next viewpoint</button>
+        <button id="resume" hidden>Resume</button>
+        <button id="explore" disabled>New Game <span>↗</span></button
+        ><button id="fly" class="secondary" disabled>Fly</button
+        ><button id="settingsOpen" class="secondary">Settings</button>
       </div>
-      <p class="project-link"><a href="https://github.com/SamG-Coder/BakedVoxelLighting" target="_blank" rel="noopener noreferrer">View on GitHub ↗</a> · Open source · MIT</p>
+      <p class="project-link">
+        <a
+          href="https://github.com/SamG-Coder/BakedVoxelLighting"
+          target="_blank"
+          rel="noopener noreferrer"
+          >View on GitHub ↗</a
+        >
+        · Open source · MIT
+      </p>
     </main>
-    <aside>
-      <div class="panel-head">
-        <span>BAKE STUDIO</span><span id="statusDot">●</span>
-      </div>
+    <div id="loadingStatus" role="status">
       <div id="status">Preparing the landscape…</div>
       <div class="progress"><div id="progress"></div></div>
-      <label>Graphics backend<select id="backend"><option value="webgpu">WebGPU · WGSL</option><option value="webgl2">WebGL2 · GLSL</option></select></label>
-      <p id="backendNote" class="note">Switching backend reloads the world; baked data stays cached.</p>
-      <label>Anti-aliasing<select id="antialiasing"><option value="msaa">MSAA 4× · default</option><option value="taa">Temporal AA · preview</option><option value="taau">TAAU · comparison</option></select></label>
-      <p class="note">Changing anti-aliasing reloads the world. Baked data stays cached.</p>
-      <button id="sound" type="button" aria-pressed="false">Enable atmosphere · M</button>
-      <label>Atmosphere volume<input id="soundVolume" type="range" min="0" max="100" value="60" /></label>
-      <p id="soundStatus" class="note" aria-live="polite">Sound starts when you explore, fly or enable it here.</p>
-      <div class="stats">
-        <div><small>LIGHT VOLUME</small><strong id="volume">—</strong></div>
+    </div>
+    <p id="menuMessage" role="status"></p>
+    <dialog id="settingsDialog" aria-labelledby="settingsTitle">
+      <div class="settings-heading">
         <div>
-          <small>LOCAL CACHE</small><strong id="cache">Opening…</strong>
+          <div class="eyebrow">MAKE YOURSELF AT HOME</div>
+          <h2 id="settingsTitle">Settings</h2>
+        </div>
+        <button
+          id="settingsClose"
+          class="secondary"
+          aria-label="Close settings"
+        >
+          Back · Esc
+        </button>
+      </div>
+      <div class="settings-layout">
+        <nav class="settings-nav" aria-label="Settings categories">
+          <button class="category" data-category="gameplay" aria-pressed="true">
+            Gameplay</button
+          ><button
+            class="category"
+            data-category="graphics"
+            aria-pressed="false"
+          >
+            Graphics</button
+          ><button class="category" data-category="audio" aria-pressed="false">
+            Audio</button
+          ><button
+            class="category"
+            data-category="controls"
+            aria-pressed="false"
+          >
+            Controls</button
+          ><button class="category" data-category="debug" aria-pressed="false">
+            Debug
+          </button>
+        </nav>
+        <div class="settings-content">
+          <section
+            id="settings-gameplay"
+            class="settings-page"
+            aria-label="Gameplay"
+          >
+            <h3>Gameplay</h3>
+            <p class="settings-description">
+              Set the pace of your time in the woodland.
+            </p>
+            <label
+              ><input id="torch" type="checkbox" /> Carry torch · T in
+              exploration</label
+            >
+            <label
+              ><input id="dayCycle" type="checkbox" checked /> Day/night cycle ·
+              24 minutes</label
+            >
+            <p class="note">
+              One full day lasts 24 minutes. New Game returns you to the
+              starting location; the landscape and baked cache are retained.
+            </p>
+          </section>
+          <section
+            id="settings-graphics"
+            class="settings-page"
+            aria-label="Graphics"
+            hidden
+          >
+            <h3>Graphics</h3>
+            <p class="settings-description">
+              Choose how the world is rendered.
+            </p>
+            <label
+              >Graphics backend<select id="backend">
+                <option value="webgpu">WebGPU · WGSL</option>
+                <option value="webgl2">WebGL2 · GLSL</option>
+              </select></label
+            >
+            <p id="backendNote" class="note">
+              Switching backend reloads the world; baked data stays cached.
+            </p>
+            <label
+              >Anti-aliasing<select id="antialiasing">
+                <option value="msaa">MSAA 4× · default</option>
+                <option value="taa">Temporal AA · preview</option>
+                <option value="taau">TAAU · comparison</option>
+              </select></label
+            >
+            <p class="note">
+              Changing anti-aliasing reloads the world. Baked data stays cached.
+            </p>
+          </section>
+          <section
+            id="settings-audio"
+            class="settings-page"
+            aria-label="Audio"
+            hidden
+          >
+            <h3>Audio</h3>
+            <p class="settings-description">
+              Local birds and a quiet breeze, positioned around you.
+            </p>
+            <button id="sound" type="button" aria-pressed="false">
+              Enable atmosphere · M
+            </button>
+            <label
+              >Atmosphere volume<input
+                id="soundVolume"
+                type="range"
+                min="0"
+                max="100"
+                value="60"
+            /></label>
+            <p id="soundStatus" class="note" aria-live="polite">
+              Sound starts when you explore, fly or enable it here.
+            </p>
+            <p class="note">
+              River audio is disabled. Headphones provide the clearest sense of
+              direction.
+            </p>
+          </section>
+          <section
+            id="settings-controls"
+            class="settings-page"
+            aria-label="Controls"
+            hidden
+          >
+            <h3>Controls</h3>
+            <p class="settings-description">
+              Mouse look for walking and free flight.
+            </p>
+            <label
+              >Mouse sensitivity <output id="sensitivityValue">1.0×</output
+              ><input
+                id="sensitivity"
+                type="range"
+                min="0.2"
+                max="3"
+                step="0.1"
+                value="1"
+            /></label>
+            <label
+              ><input id="invertY" type="checkbox" /> Invert vertical
+              look</label
+            >
+            <dl class="key-bindings">
+              <dt>W A S D</dt>
+              <dd>Move · flight follows your view</dd>
+              <dt>Mouse</dt>
+              <dd>Look around</dd>
+              <dt>Shift</dt>
+              <dd>Move faster</dd>
+              <dt>Q / E</dt>
+              <dd>Fly down / up</dd>
+              <dt>T</dt>
+              <dd>Toggle carried torch</dd>
+              <dt>M</dt>
+              <dd>Toggle atmosphere</dd>
+              <dt>Escape</dt>
+              <dd>Release cursor and open menu</dd>
+            </dl>
+          </section>
+          <section
+            id="settings-debug"
+            class="settings-page"
+            aria-label="Debug"
+            hidden
+          >
+            <h3>Debug</h3>
+            <p class="settings-description">
+              World inspection, baking and developer tools.
+            </p>
+            <label
+              ><input id="showStats" type="checkbox" /> Show performance
+              overlay</label
+            ><button id="view" class="secondary">Next viewpoint</button>
+            <div class="stats">
+              <div>
+                <small>LIGHT VOLUME</small><strong id="volume">—</strong>
+              </div>
+              <div>
+                <small>LOCAL CACHE</small><strong id="cache">Opening…</strong>
+              </div>
+            </div>
+            <label
+              >Time of day <output id="clockValue">08:08</output
+              ><input
+                id="timeOfDay"
+                type="range"
+                min="0"
+                max="23.99"
+                step="0.01"
+                value="8.133333"
+            /></label>
+            <button id="lookSun" type="button">Look at sun</button>
+            <label
+              >Sun elevation <output id="sunValue">32°</output
+              ><input
+                id="sun"
+                type="range"
+                min="12"
+                max="75"
+                value="32" /></label
+            ><label
+              >Voxel resolution<select id="resolution">
+                <option value="48">48 × 24 × 48 · quick</option>
+                <option value="64">64 × 32 × 64 · quick</option>
+                <option value="96" selected>96 × 48 × 96 · balanced</option>
+              </select></label
+            ><label
+              >Tree HLOD<select id="treeLod">
+                <option value="-1">Automatic distance</option>
+                <option value="0">L0 · full trees</option>
+                <option value="1">L1 · same crown / reduced branches</option>
+                <option value="2">L2 · 16-view canopy + branches</option>
+                <option value="3">L3 · 8-view anchored trees</option>
+              </select></label
+            ><label
+              >Grass LOD<select id="grassLod">
+                <option value="-1">Automatic distance</option>
+                <option value="0">L0 · dense crossed cards</option>
+                <option value="1">L1 · sparse crossed cards</option>
+                <option value="2">L2 · baked patch impostors</option>
+                <option value="3">L3 · ground cover only</option>
+              </select></label
+            >
+            <div class="toggle">
+              <label
+                ><input type="checkbox" id="dynamic" /> Moving light + live GPU
+                bake</label
+              >
+              <label
+                ><input type="checkbox" id="gi" checked /> Voxel lighting on all
+                LODs</label
+              ><label
+                ><input type="checkbox" id="lodColors" /> LOD colours</label
+              >
+            </div>
+            <button id="bake" disabled>Bake & cache world <span>↻</span></button
+            ><button class="text-button" id="clear">
+              Clear this project's cache
+            </button>
+            <p class="note">
+              Sun updates live. Moving light refreshes GPU radiance without
+              rebuilding surface atlases. Faded HLOD · no fog.
+            </p>
+          </section>
         </div>
       </div>
-      <label>Time of day <output id="clockValue">08:08</output><input id="timeOfDay" type="range" min="0" max="23.99" step="0.01" value="8.133333" /></label>
-      <label><input id="torch" type="checkbox" /> Carry torch · T in exploration</label>
-      <label><input id="dayCycle" type="checkbox" checked /> Day/night cycle · 24 minutes</label>
-      <button id="lookSun" type="button">Look at sun</button>
-      <label
-        >Sun elevation <output id="sunValue">32°</output
-        ><input id="sun" type="range" min="12" max="75" value="32" /></label
-      ><label
-        >Voxel resolution<select id="resolution">
-          <option value="48">48 × 24 × 48 · quick</option>
-          <option value="64">64 × 32 × 64 · quick</option>
-          <option value="96" selected>96 × 48 × 96 · balanced</option>
-        </select></label
-      ><label
-        >Tree HLOD<select id="treeLod">
-          <option value="-1">Automatic distance</option>
-          <option value="0">L0 · full trees</option>
-          <option value="1">L1 · same crown / reduced branches</option>
-          <option value="2">L2 · 16-view canopy + branches</option>
-          <option value="3">L3 · 8-view anchored trees</option>
-        </select></label
-      ><label
-        >Grass LOD<select id="grassLod">
-          <option value="-1">Automatic distance</option>
-          <option value="0">L0 · dense crossed cards</option>
-          <option value="1">L1 · sparse crossed cards</option>
-          <option value="2">L2 · baked patch impostors</option>
-          <option value="3">L3 · ground cover only</option>
-        </select></label
-      >
-      <div class="toggle">
-        <label
-          ><input type="checkbox" id="dynamic" /> Moving light + live GPU
-          bake</label
-        >
-        <label
-          ><input type="checkbox" id="gi" checked /> Voxel lighting on all
-          LODs</label
-        ><label><input type="checkbox" id="lodColors" /> LOD colours</label>
+      <div class="settings-bottom">
+        Audio, controls, day cycle and overlay preferences are saved on this
+        device. Debug overrides last for this session.
       </div>
-      <button id="bake" disabled>Bake & cache world <span>↻</span></button
-      ><button class="text-button" id="clear">
-        Clear this project's cache
-      </button>
-      <p class="note">
-        Sun updates live. Moving light refreshes GPU radiance without rebuilding
-        surface atlases. Faded HLOD · no fog.
-      </p>
-    </aside>
+    </dialog>
     <footer>
       <div>
         <span class="live"><i></i> <b id="fps">—</b> FPS</span
@@ -106,9 +303,12 @@
         ><span id="lodStats">HLOD preparing</span>
       </div>
       <div id="hint">
-        Fly · Drag to look · Scroll to travel · WASD move · Q/E down/up · Shift faster · Explore to walk
+        Fly · Drag to look · Scroll to travel · WASD move · Q/E down/up · Shift
+        faster · Explore to walk
       </div>
     </footer>
+    <button id="pauseGame" class="secondary">Menu · Esc</button>
+    <div id="fallbackHint">Drag to look · WASD to move · Esc for menu</div>
     <div id="error" hidden></div>
     <script type="module" src="/src/main.js"></script>
   </body>

@@ -10,6 +10,8 @@ export class FlyControls {
     this.forward = new Vector3();
     this.motion = new Vector3();
     this._enabled = true;
+    this.sensitivity = 1;
+    this.invertY = false;
     this.pointer = null;
     this.travel = 0;
     element.addEventListener("pointerdown", (event) => {
@@ -72,10 +74,14 @@ export class FlyControls {
 
   look(dx, dy) {
     this.rotation.setFromQuaternion(this.camera.quaternion, "YXZ");
-    this.rotation.y -= dx * 0.002;
+    this.rotation.y -= dx * 0.002 * this.sensitivity;
     this.rotation.x = Math.max(
       -1.55,
-      Math.min(1.55, this.rotation.x - dy * 0.002),
+      Math.min(
+        1.55,
+        this.rotation.x -
+          dy * 0.002 * this.sensitivity * (this.invertY ? -1 : 1),
+      ),
     );
     this.rotation.z = 0;
     this.camera.quaternion.setFromEuler(this.rotation);

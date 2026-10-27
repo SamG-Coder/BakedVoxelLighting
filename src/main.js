@@ -1,3 +1,4 @@
+import { installGameMenu } from "./game-menu.js";
 import terrainGenerationSource from "./terrain-generation.js?raw";
 import watershedSource from "./watershed.js?raw";
 import terrainNoiseSource from "./terrain-noise.js?raw";
@@ -262,7 +263,7 @@ const ambience = createSpatialAtmosphere(camera, (state) => {
   $("soundStatus").textContent =
     state.error ||
     (state.enabled
-      ? "3D birds, water and wind · headphones recommended"
+      ? "3D birds and quiet wind · headphones recommended"
       : "Sound starts when you explore, fly or enable it here.");
 });
 diagnostics.audio = ambience.stats;
@@ -495,20 +496,33 @@ function cacheLabel() {
 }
 const keys = new Set();
 let walking = false,
+  cameraModeActive = false,
+  fallbackMouse = false,
+  capturePending = false,
+  fallbackDrag = null,
   yaw = 0,
   pitch = 0;
-function resumeFly(keepExploring = false) {
+function pauseCamera() {
+  cameraModeActive = fallbackMouse = capturePending = false;
+  fallbackDrag = null;
+  document.body.classList.remove("fallback-controls");
   walking = false;
-  document.body.classList.toggle("exploring", keepExploring);
-  controls.enabled = true;
+  controls.enabled = false;
   keys.clear();
-  $("hint").textContent =
-    "Drag to look · Scroll to travel · Fly: WASD + Q/E · Shift faster · Esc to show controls";
 }
-async function enterCameraMode(walk) {
+async function enterCameraMode(walk, fresh = false) {
+  if (!loopStarted) return;
+  if (fresh) {
+    camera.position.set(19, height(19, 43) + 1.85, 43);
+    controls.target.set(-8, height(-8, -23) + 5, -23);
+    controls.lookAtTarget();
+  }
   void ambience.startOnExplore();
   walking = walk;
-  document.body.classList.add("exploring");
+  cameraModeActive = true;
+  fallbackMouse = false;
+  capturePending = true;
+  document.body.classList.add("exploring", "immersive");
   controls.enabled = !walk;
   keys.clear();
   $("hint").textContent = walk
@@ -518,38 +532,74 @@ async function enterCameraMode(walk) {
   yaw = Math.atan2(-d.x, -d.z);
   pitch = Math.asin(d.y);
   // Mouse capture can be denied in embedded previews or an inactive tab.
-  // Keep the loaded world usable with drag/scroll controls in that case.
-  if (!renderer.domElement.requestPointerLock) return resumeFly();
+  // Keep the selected mode playable with drag-to-look when capture is unavailable.
+  if (!renderer.domElement.requestPointerLock) return useDragLook();
   try {
     renderer.domElement.tabIndex = -1;
     renderer.domElement.focus({ preventScroll: true });
     await renderer.domElement.requestPointerLock();
   } catch {
-    resumeFly();
+    useDragLook();
   }
 }
-$("explore").onclick = () => enterCameraMode(true);
-$("fly").onclick = () => enterCameraMode(false);
-document.addEventListener("pointerlockerror", () => resumeFly());
+function useDragLook() {
+  if (!cameraModeActive) return;
+  capturePending = false;
+  fallbackMouse = true;
+  document.body.classList.add("exploring", "immersive", "fallback-controls");
+  gameMenu.captured();
+  renderer.domElement.focus({ preventScroll: true });
+}
+document.addEventListener("pointerlockerror", useDragLook);
 document.addEventListener("pointerlockchange", () => {
   const captured = document.pointerLockElement === renderer.domElement;
-  document.body.classList.toggle("immersive", captured);
-  if (!captured) {
-    resumeFly();
-  }
+  if (captured) {
+    capturePending = fallbackMouse = false;
+    document.body.classList.remove("fallback-controls");
+    document.body.classList.add("immersive");
+    gameMenu.captured();
+  } else if (cameraModeActive && !capturePending && !fallbackMouse)
+    gameMenu.show();
 });
+renderer.domElement.addEventListener("pointerdown", (e) => {
+  if (!fallbackMouse || !walking || e.button !== 0) return;
+  fallbackDrag = e.pointerId;
+  renderer.domElement.setPointerCapture(e.pointerId);
+});
+for (const type of ["pointerup", "pointercancel", "lostpointercapture"])
+  renderer.domElement.addEventListener(type, () => {
+    fallbackDrag = null;
+  });
 document.addEventListener("mousemove", (e) => {
-  if (document.pointerLockElement === renderer.domElement) {
+  if (
+    document.pointerLockElement === renderer.domElement ||
+    (fallbackMouse && walking && fallbackDrag !== null)
+  ) {
     if (walking) {
-      yaw -= e.movementX * 0.002;
-      pitch = T.MathUtils.clamp(pitch - e.movementY * 0.002, -1.4, 1.4);
+      yaw -= e.movementX * 0.002 * controls.sensitivity;
+      pitch = T.MathUtils.clamp(
+        pitch -
+          e.movementY *
+            0.002 *
+            controls.sensitivity *
+            (controls.invertY ? -1 : 1),
+        -1.4,
+        1.4,
+      );
     } else {
       controls.look(e.movementX, e.movementY);
     }
   }
 });
 window.addEventListener("keydown", (e) => {
-  if (e.target.matches("input,select,button")) return;
+  if (e.code === "Escape" && cameraModeActive && !document.pointerLockElement) {
+    gameMenu.show();
+    e.preventDefault();
+    return;
+  }
+  if (e.target.matches("input,select,button") || $("settingsDialog").open)
+    return;
+  if (!cameraModeActive) return;
   if (e.code === "KeyM" && !e.repeat) void ambience.toggle();
   if (e.code === "KeyT" && !e.repeat) {
     $("torch").checked = !$("torch").checked;
@@ -1581,6 +1631,7 @@ async function start() {
   progress(`16 km² · ${world.trees.length} trees · ready`, 1);
   setPreparationPresenting(true);
   loopStarted = true;
+  gameMenu.ready();
   startGrassJobs();
   scheduleFrame();
   if (showcaseRequested) {
@@ -1588,4 +1639,10 @@ async function start() {
     installShowcase(window.worldTest, diagnostics);
   }
 }
+const gameMenu = installGameMenu({
+  start: enterCameraMode,
+  pause: pauseCamera,
+  controls,
+  ambience,
+});
 start().catch(fail);
