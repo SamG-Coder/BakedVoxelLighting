@@ -206,3 +206,34 @@ Validation: production build and the existing habitat continuity/worker parity c
 Current good: dense mixed foreground grasses and flowers, habitat-based placement, irregular baked meadow colonies, connected routes and continuous river joins. Current visual priorities: improve the visible tufts along bare banks, strengthen distant ground-cover texture agreement, reconcile distant tree lighting, then refine river surface/shore transitions and crossings.
 
 An already-completed cleanup in the preceding commit shares identical atlas base pixels with mip level zero. A bounded ownership census found 296,706,332 fewer duplicate CPU buffer bytes; pixels and all mip levels are unchanged. This is retained maintenance, not the focus of the visual pass or a total-memory claim.
+
+## Selected visual improvement: riverbank growth gradient
+
+Following the meadow silhouette pass, the selected issue was full-sized grass tufts isolated on exposed riverbank soil. The existing bank field reduced density but did not reduce the size of the surviving plants. Height and width now taper smoothly toward exposed gravel using that same world-space field. Near crossed cards and L2 baked colonies share the response; the established meadow beyond the bank stays unchanged. This is a procedural growth approximation, not a botanical simulation.
+
+Good: mixed foreground flowers and grasses; coherent meadow/woodland habitats; irregular L2 colonies; connected river surfaces; and now a low shoreline fringe leading into established grass. Still bad: repeated tuft textures remain recognizable; distant ground cover is flatter than the foreground; some distant tree lighting differs; river ripples and crossings still need visual refinement. The next visual choice should address the water's overly uniform bright ripple pattern or distant ground-cover agreement.
+
+Validation:
+
+- Existing habitat and generated-riverbank checks pass (1,459 channel-bank samples). Production build passes.
+- An isolated fixed-seed comparison of the bank-growth change, using the same terrain inputs, preserved plant counts, positions and species. Inland plant records were identical in that comparison. The subsequent channel-profile change regenerates terrain and therefore can move vegetation. At 0.1m beyond the nominal shore, mean height changed from 0.785m to 0.173m; at 2m it changed from 0.816m to 0.422m. Height/width return to their inland values smoothly. L2 resizing retains ground contact. Submerged locations still reject grass.
+- A close camera comparison at the same noon view shows the isolated large tufts on gravel replaced by smaller growth, with the taller meadow retained upslope. The world was checked in WebGPU; the inspected settled view reports 60 FPS without captured errors. This is a visual/stationary check, not a claim of a 60 FPS minimum throughout traversal.
+- Evidence: `evidence/bank-detail-before.png`, `bank-detail-after.png`, and `bank-growth-comparison.json`. No new render passes, bindings or per-frame growth calculations; the size adjustment is part of worker preparation and cached batches.
+
+## Selected visual improvement: eroded banks, reflective water and vegetation shading
+
+The user prioritized water edges/colour, evidence of bank erosion, reflections, grass shadows and bark variety. Channels now use their connected graph's turn direction to deepen outer bends and create steeper cut banks, with shallower shelves on inner bends. The profile joins the floodplain continuously and retains the original ground as its upper bound. Exposed bank grass scales down in height and width instead of leaving isolated full-size plants on gravel.
+
+Water now has a muted green-brown depth response, clearer shallow edges, quieter ripple normals and less persistent white foam. A first terrain/canopy-only reflection looked too uniformly green during inspection. The final implementation uses a half-resolution planar capture for nearby water at the current reach elevation, blending to the cheaper terrain/canopy and sky estimate farther away. The reflection camera is limited to 320m; its distant grass uses baked ground cover beyond 64m plus tile radius. The regular scene retains all existing grass detail. Reflection rendering reuses shadow maps, scratch arrays and the existing visible scene, and does not rebuild water geometry. It is an extra render pass, not a free baked effect.
+
+L0/L1 grass cards now cast alpha-cut shadows, including their existing wind/material masks. Incoming batches prepare shadow materials before publication; recycled hidden groups are included in preparation. Bark uses stronger seeded species palettes, elongated weathering and age-scaled lichen. Existing texture/normal detail, moss response, geometry and HLOD capture paths are retained; this pass does not supply new scanned bark maps.
+
+Validation:
+
+- Production and Pages builds pass. Habitat checks, seven grass-streaming checks and tree surface/seed-colour/merged-colour parity checks pass.
+- River profile checks cover 697 actual bends plus synthetic continuity/scour/shelf boundaries. The generated-bank check covers 1,459 samples; the river union check covers 2,807 shared vertices and 28,644 confluence samples. Watershed channel centres and route attachment checks pass.
+- The final WebGPU riverbank view reached settled queues with no captured errors and reported 60 FPS at 1280x720. This is a stationary visual check, not a traversal or minimum-FPS guarantee. Nearby grass shadows and bank/vegetation reflections are visible in `evidence/river-final-webgpu.png`; its diagnostic snapshot is alongside it.
+- The final WebGL2 view also settled without captured errors and shows the same reflection/shadow result (`evidence/river-final-webgl2.png`). It reported about 41 FPS versus 60 FPS in WebGPU at this view. The extra scene-reflection pass has a material WebGL2 cost; this change does not meet a 59 FPS minimum on both backends.
+- The 2m terrain heightfield supports steep ledges but cannot make undercut cliffs or overhangs. This is accumulated-erosion-inspired shaping, not continuous lateral erosion, collapse or sediment simulation. The planar capture fades away across reach elevation differences; distant reflections remain approximate, and reflected objects are limited by scene residency.
+
+Good: bank slope contrast, low shoreline fringe, clearer water edges, actual nearby scene reflections, grounded grass shadows, and more varied bark tints. Still needs visual refinement: gravel texture repetition, broad distant canopy reflection shapes, coarse bank silhouettes at the 2m terrain grid, grass tuft repetition, and some distant tree lighting differences. No tests were added to Actions.

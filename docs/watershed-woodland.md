@@ -8,7 +8,7 @@ The playable world remains 4 x 4 km. A deterministic 5.12 km regional heightfiel
 2. Resolve drainage using a priority flood. Each interior cell has a downhill receiver; accumulation gives upstream catchment area.
 3. Apply five stream-power-inspired incision passes, re-routing between passes.
 4. Extract connected channels above an area threshold, widen reaches with catchment area and smooth their coordinates without breaking graph connections.
-5. Generate the playable 2001 x 2001 heightfield, run the existing droplet and thermal erosion, carve all channels, and calculate moisture, slope and traffic paths. Side paths project their origins onto the generated main road before slope-cost routing; exact attachment points survive grid snapping and smoothing.
+5. Generate the playable 2001 x 2001 heightfield, run the existing droplet and thermal erosion, carve channels with bend-dependent cut banks and inner shelves, and calculate moisture, slope and traffic paths. Side paths project their origins onto the generated main road before slope-cost routing; exact attachment points survive grid snapping and smoothing.
 6. Generate coherent forest habitat, then use age-dependent spacing, species communities, canopy gaps and mortality to place trees and deadwood.
 7. Use the same moisture/canopy fields for understory species and ground-cover baking.
 
@@ -29,9 +29,9 @@ The full-resolution erosion and path pass runs in `terrain-generation-worker.js`
 
 ## Deterministic seed measurements
 
-`node scripts/verify-watershed.mjs` reports 1,929 regional channel segments and 36 junctions. All 1,528 tested interior channel centres are submerged (minimum measured centre depth 0.617m). The continuous water surface uses 350 pages / 185,206 triangles and 8,655,192 bytes of vertex/index buffers, versus 328 pages / 305,519 triangles / 12,575,076 bytes for the overlapping strips. Page count increases slightly because clipping and culling use a regular spatial lattice. Reaches crossing the playable boundary are now included and their surface is clipped at the boundary.
+`node scripts/verify-watershed.mjs` reports 1,929 regional channel segments and 36 junctions. All 1,528 tested interior channel centres are submerged (minimum measured centre depth 0.666m). The continuous water surface uses 351 pages / 186,138 triangles and 8,694,936 bytes of vertex/index buffers, versus 328 pages / 305,519 triangles / 12,575,076 bytes for the overlapping strips. Page count increases slightly because clipping and culling use a regular spatial lattice. Reaches crossing the playable boundary are now included and their surface is clipped at the boundary.
 
-The generated population contains 146,590 trees and 1,827 fallen-wood records after connecting the branch roads. One-hectare cells range from 0 to 217 trees, with 91.62 trees/ha averaged across the entire map including open ground. These are generated tree counts, not a field inventory calibrated to a diameter threshold. The age/diameter metadata is approximate. The earlier 300-600 stems/ha research target has not been imposed on every dense stand; that would require more small regeneration stems and further performance validation.
+The generated population contains 145,199 trees and 1,858 fallen-wood records after the asymmetric bank pass. One-hectare cells range from 0 to 227 trees, with 90.75 trees/ha averaged across the entire map including open ground. These are generated tree counts, not a field inventory calibrated to a diameter threshold. The age/diameter metadata is approximate. The earlier 300-600 stems/ha research target has not been imposed on every dense stand; that would require more small regeneration stems and further performance validation.
 
 ## Validation
 
@@ -43,6 +43,7 @@ Run locally:
 - `node scripts/verify-river.mjs`
 - `node scripts/verify-river-union.mjs`
 - `node scripts/verify-riverbanks.mjs`
+- `node scripts/verify-river-profile.mjs`
 - `node scripts/landscape-data.mjs`
 - `node scripts/verify-habitats.mjs`
 - `node scripts/verify-plant-grid.mjs`
@@ -54,7 +55,7 @@ No tests were added to GitHub Actions. Browser checks cover both graphics backen
 
 ## Limits and subsequent refinements
 
-This pass does not simulate long-term lateral river migration, bank collapse, flood deposition, lakes or soil chemistry. Roads use the existing slope/moisture cost routing, not a settlement history model. The regional horizon is terrain only and does not extend the playable forest population. Water is now a continuous height-field surface, but it cannot represent stacked water, waterfalls or overhangs. It retains the existing baked sky/cloud reflection estimate; screen-space scene reflections have not been added. Branch roads now connect to the main road. Deliberate bridges or fords remain follow-on work at existing water crossings.
+This pass does not simulate long-term lateral river migration, bank collapse, flood deposition, lakes or soil chemistry. Roads use the existing slope/moisture cost routing, not a settlement history model. The regional horizon is terrain only and does not extend the playable forest population. Water is now a continuous height-field surface, but it cannot represent stacked water, waterfalls or overhangs. Nearby reflections use a half-resolution planar scene capture. Other river elevations and distant reaches blend to sky/clouds and a bounded trace against the resident terrain/canopy heightfield. The far estimate does not resolve individual branches or moving objects. This is not screen-space reflection. Branch roads now connect to the main road. Deliberate bridges or fords remain follow-on work at existing water crossings.
 
 ## Research basis
 
@@ -64,3 +65,11 @@ This pass does not simulate long-term lateral river migration, bank collapse, fl
 - Forest structure and diameter-threshold context: https://www.wsl.ch/en/publications/inventory-of-the-largest-primeval-beech-forest-in-europe/
 - Understory light: https://nph.onlinelibrary.wiley.com/doi/10.1111/nph.17803
 - Plant distribution modelling: https://graphics.stanford.edu/papers/ecosys/
+
+## Bank, water and vegetation appearance
+
+Channel turns are shared at graph nodes, with incoming direction weighted by upstream catchment area. Outer bends gain deeper scour and steeper soil ledges; inner bends have a shallower depositional profile. The profile blends continuously into the floodplain and never raises the original ground. This approximates accumulated erosion, not a time-stepping simulation of bank collapse. The 2m heightfield cannot produce true undercuts or overhangs. The cut-bank/point-bar relationship follows [USGS channel morphology](https://pubs.usgs.gov/publication/sir20245079/full).
+
+The river now has depth-dependent green-brown absorption, a clearer shoreline, quieter normal-map ripples and less constant foam. The distant landscape reflection trace reads two existing world textures, with at most 15 search steps and three refinement steps. Nearby water adds one half-resolution scene capture, limited to a 320m reflection camera range; grass beyond 64m plus its tile radius uses the ground-cover bake in that capture. Normal scene detail is retained. Shadow maps are reused rather than regenerated for the mirror camera. Planar reflection fades out from 80-160m and for water more than 0.2-1.5m away from the local reflection plane elevation. The capture is skipped when the camera is more than 160m from the nearest shore, after its first initialization. Water retains its 1.333 refractive index and view-dependent Fresnel response. This is an RGB approximation, not spectral water optics.
+
+Bank grass now tapers in both width and height, in addition to the existing density response. Nearby L0/L1 crossed grass cards cast alpha-cut shadows through the existing shadow maps; shadow materials are prepared before publishing incoming batches. Far baked grass keeps its existing representation. Bark has seeded species palettes, elongated weathering patches and age-scaled lichen in vertex colours. Those colours feed detailed geometry, HLOD captures and voxel material reflectance, retaining the existing bark textures and normals.

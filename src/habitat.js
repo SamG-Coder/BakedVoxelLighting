@@ -97,6 +97,11 @@ export function grassHabitat(x, z, land) {
   const gold =
     smooth(0.32, 0.76, region) * (1 - moisture * 0.65) * (1 - woodland * 0.65);
   const lush = moisture * (1 - gold) * (0.4 + region * 0.6);
+  // Exposed gravel supports a low fringe before the established meadow.
+  // Use the same continuous bank field as the ground material and density,
+  // so sparse survivors do not remain full-sized tufts on otherwise bare bars.
+  const bank = bankExposure(x, z, land.riverDistance ?? 100);
+  const established = smooth(0.06, 0.88, 1 - bank);
   return {
     weights,
     mixes,
@@ -106,8 +111,13 @@ export function grassHabitat(x, z, land) {
     density:
       Math.min(1, 0.52 + fine * 0.35 + moisture * 0.16) *
       (1 - woodland * 0.91) *
-      (1 - bankExposure(x, z, land.riverDistance ?? 100) * 0.97),
-    height: (0.78 + broad * 0.63) * (1 - short * 0.34) * (1 - woodland * 0.46),
+      (1 - bank * 0.97),
+    height:
+      (0.78 + broad * 0.63) *
+      (1 - short * 0.34) *
+      (1 - woodland * 0.46) *
+      (0.22 + established * 0.78),
+    width: 0.42 + established * 0.58,
     tint,
     colour: [
       tint * (0.7 + dry * 0.48 + short * 0.11 + gold * 0.38 - lush * 0.1),
@@ -160,7 +170,9 @@ export function* grassPopulation(
     const sy =
       (form.height[0] + rng() * (form.height[1] - form.height[0])) *
       habitat.height;
-    const sx = form.width[0] + rng() * (form.width[1] - form.width[0]);
+    const sx =
+      (form.width[0] + rng() * (form.width[1] - form.width[0])) *
+      (habitat.width ?? 1);
     const variation = 0.94 + rng() * 0.12;
     const colour = grassColour(habitat);
     yield {

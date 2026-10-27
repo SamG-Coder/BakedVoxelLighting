@@ -198,6 +198,7 @@ function tube(path, sides, plant, level) {
         positions[i + 2],
         plant.seed,
         plant.species,
+        plant.age,
       ),
     );
   g.setAttribute("color", new T.Float32BufferAttribute(colours, 3));
@@ -303,6 +304,7 @@ export function growPlant(seed, species = 0, shrub = false, age = 1) {
           skin.points[0].z,
           seed,
           species,
+          age,
         ),
         radii: skin.radii.map(
           (r, i) =>

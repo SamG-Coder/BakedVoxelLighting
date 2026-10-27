@@ -40,6 +40,10 @@ export function buildRiverData(
   }
   const chunks = [],
     stride = cells + 1;
+  // Clipped edges can converge to the same Float32 position from different
+  // triangles. Give that rendered location one depth/flow record, including
+  // page copies, rather than retaining sub-ULP interpolation differences.
+  const sharedSurface = new Map();
   // x,y,z, flowX,flowZ,speed,depth, signed wet boundary.
   const field = new Float64Array(stride * stride * 8);
   for (const page of pages.values()) {
@@ -128,16 +132,25 @@ export function buildRiverData(
       for (let k = 0; k < 7; k++)
         v[k] = field[ai + k] + (field[bi + k] - field[ai + k]) * t;
       const n = Math.hypot(v[3], v[4]);
+      const px = Math.fround(v[0]),
+        pz = Math.fround(v[2]);
+      const address = `${px},${pz}`;
+      let surface = sharedSurface.get(address);
+      if (!surface) {
+        surface = [
+          Math.fround(v[1]),
+          n > 1e-9 ? v[3] / n : field[ai + 3],
+          n > 1e-9 ? v[4] / n : field[ai + 4],
+          v[5],
+          v[6],
+        ];
+        sharedSurface.set(address, surface);
+      }
       const id = position.length / 3;
-      position.push(Math.fround(v[0]), Math.fround(v[1]), Math.fround(v[2]));
+      position.push(px, surface[0], pz);
       normal.push(0, 1, 0);
-      coord.push(v[0], v[2]);
-      flow.push(
-        n > 1e-9 ? v[3] / n : field[ai + 3],
-        n > 1e-9 ? v[4] / n : field[ai + 4],
-        v[5],
-        v[6],
-      );
+      coord.push(px, pz);
+      flow.push(surface[1], surface[2], surface[3], surface[4]);
       vertices.set(key, id);
       return id;
     }

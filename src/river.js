@@ -1,13 +1,19 @@
 import * as T from "three/webgpu";
 import * as N from "three/tsl";
 import { buildRiverData } from "./river-data.js";
-import { riverTile, riverSurface, riverDisplacement } from "./river-kernels.js";
+import {
+  riverTile,
+  riverSurface,
+  riverDisplacement,
+  riverReflection,
+} from "./river-kernels.js";
 import riverSource from "./river-kernels.js?raw";
 import { skyColour } from "./native-kernels.js";
 import { cloudData } from "./clouds.js";
-import { fullscreen, readPixels, ref } from "./tsl-baking.js";
+import { fullscreen, readPixels, ref, texRef } from "./tsl-baking.js";
 import { uploadTextures } from "./gpu-uploads.js";
 import { digest } from "./cache.js";
+import { sampleHydrology } from "./watershed.js";
 
 export const riverStats = {
   chunks: 0,
@@ -15,7 +21,7 @@ export const riverStats = {
   cacheHit: false,
   textureSize: 256,
   flow: "downstream",
-  cpuUpdatesPerFrame: 0,
+  flowCPUUpdatesPerFrame: 0,
 };
 let rippleMap;
 export async function prepareRiver(renderer, cache) {
@@ -56,7 +62,7 @@ export function createRiverMaterial(U) {
     throw new Error("Prepare river ripples before building the water.");
   const material = new T.MeshPhysicalNodeMaterial({
     color: 0xffffff,
-    roughness: 0.17,
+    roughness: 0.09,
     metalness: 0,
     ior: 1.333,
     transparent: true,
@@ -92,34 +98,130 @@ export function createRiverMaterial(U) {
     .xyz.normalize();
   material.colorNode = N.mix(
     N.mix(
-      N.vec3(0.11, 0.17, 0.105),
-      N.vec3(0.018, 0.055, 0.044),
-      N.smoothstep(0.12, 1.5, depth),
+      N.vec3(0.075, 0.105, 0.065),
+      N.vec3(0.008, 0.034, 0.028),
+      N.float(1).sub(N.exp(depth.mul(-0.85))),
     ),
     N.vec3(0.65, 0.72, 0.65),
     foam,
   );
-  material.roughnessNode = N.mix(N.float(0.13), N.float(0.68), foam);
+  material.roughnessNode = N.mix(N.float(0.09), N.float(0.6), foam);
   const view = N.cameraPosition.sub(N.positionWorld).normalize();
   const fresnel = N.pow(N.float(1).sub(N.max(view.dot(normal), 0)), 5);
   material.opacityNode = N.smoothstep(0, 0.16, depth).mul(
     N.clamp(
-      N.float(0.19).add(depth.mul(0.32)).add(fresnel.mul(0.75)).add(foam),
+      N.float(1)
+        .sub(N.exp(depth.mul(-0.65)))
+        .add(fresnel.mul(0.88))
+        .add(foam),
       0,
       0.98,
     ),
   );
   material.maskNode = depth.greaterThan(0.005);
-  // Reuse the baked sky/cloud field, sampled in the actual reflection direction.
-  // No second scene render, screen readback, or per-frame CPU flow simulation.
+  const planar = N.reflector({
+    resolutionScale: 0.5,
+    bounces: false,
+    samples: 1,
+  });
+  planar.target.rotation.x = -Math.PI / 2;
+  const planeLevel = N.uniform(0),
+    planeWeight = N.uniform(0);
+  const water = {};
+  const hiddenGrass = [],
+    shadowUpdates = [],
+    shadowLights = [];
+  const centre = new T.Vector3();
+  let reflectionCamera;
+  function selectReflectionObjects(object) {
+    if (!object.visible) return;
+    if (object.isLight && object.shadow) {
+      shadowLights.push(object.shadow);
+      shadowUpdates.push(object.shadow.needsUpdate);
+      object.shadow.needsUpdate = false;
+    }
+    if (object.userData.grassCard && object.boundingSphere) {
+      centre
+        .copy(object.boundingSphere.center)
+        .applyMatrix4(object.matrixWorld);
+      // Subpixel distant grass is already represented by the ground-cover bake.
+      if (
+        Math.hypot(
+          centre.x - reflectionCamera.position.x,
+          centre.z - reflectionCamera.position.z,
+        ) >
+        64 + object.boundingSphere.radius
+      ) {
+        hiddenGrass.push(object);
+        object.visible = false;
+        return;
+      }
+    }
+    for (const child of object.children) selectReflectionObjects(child);
+  }
+  const base = planar.reflector;
+  const updateReflection = base.updateBefore.bind(base);
+  base.updateBefore = (frame) => {
+    sampleHydrology(frame.camera.position.x, frame.camera.position.z, water);
+    const nearby =
+      water.segment >= 0 &&
+      water.distance - water.width < 160 &&
+      frame.camera.position.y > water.level;
+    planeWeight.value = nearby ? 1 : 0;
+    if (!nearby && base.hasOutput) return false;
+    planeLevel.value = water.level;
+    planar.target.position.y = water.level;
+    planar.target.updateMatrixWorld(true);
+    reflectionCamera = frame.camera;
+    const far = reflectionCamera.far;
+    selectReflectionObjects(frame.scene);
+    reflectionCamera.far = Math.min(far, 320);
+    reflectionCamera.updateProjectionMatrix();
+    try {
+      return updateReflection(frame);
+    } finally {
+      reflectionCamera.far = far;
+      reflectionCamera.updateProjectionMatrix();
+      for (const mesh of hiddenGrass) mesh.visible = true;
+      for (let i = 0; i < shadowLights.length; i++)
+        shadowLights[i].needsUpdate = shadowUpdates[i];
+      hiddenGrass.length = shadowLights.length = shadowUpdates.length = 0;
+    }
+  };
+  planar.uvNode = N.screenUV.flipX().add(normal.xz.mul(0.035));
+  material.addEventListener("dispose", () => planar.dispose());
+  // Sky reflection plus a bounded trace through resident landscape fields.
+  // Reflections remain available outside the screen and streamed voxel volume.
   material.envNode = N.Fn((builder) => {
     const ray = builder.context.getUV();
-    return skyColour({
+    const sky = skyColour({
       ray,
       sun: ref(U, "liveSunDirection", "vec3"),
       cloud: cloudData(U, N.positionWorld, ray),
       daylight: ref(U, "daylight"),
     });
+    const canopy = texRef(U, "rootField");
+    const landscape = riverReflection({
+      terrain: texRef(U, "terrainField"),
+      canopy,
+      linearSampler: N.sampler(canopy),
+      p: N.positionWorld.add(N.vec3(0, 0.03, 0)),
+      ray,
+      daylight: ref(U, "daylight"),
+      sun: ref(U, "liveSunDirection", "vec3"),
+    });
+    const estimate = N.mix(sky, landscape.rgb, landscape.a);
+    // A river is not globally planar. Only nearby water at this reach's elevation
+    // uses the scene capture; other heights blend to the resident-field estimate.
+    const local = N.float(1)
+      .sub(N.smoothstep(0.2, 1.5, N.abs(N.positionWorld.y.sub(planeLevel))))
+      .mul(
+        N.float(1).sub(
+          N.smoothstep(80, 160, N.cameraPosition.sub(N.positionWorld).length()),
+        ),
+      )
+      .mul(planeWeight);
+    return N.mix(estimate, planar.rgb, local);
   })();
   return material;
 }
@@ -152,6 +254,7 @@ export function buildRiver(scene, heightAt, U, options) {
     triangles: data.chunks.reduce((n, c) => n + c.index.length / 3, 0),
     lengthMetres: Math.round(data.length),
     speedMetresPerSecond: [0.18, 0.96],
+    reflection: "half-resolution local planar + distant terrain/canopy + sky",
   });
   return group;
 }

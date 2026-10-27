@@ -8,16 +8,45 @@ export function treeTint(seed = 0) {
   return [value * (0.86 + hue * 0.23), value, value * (0.8 + (1 - hue) * 0.19)];
 }
 
-export function barkColour(x, y, z, seed, species) {
+const barkPalettes = [
+  [
+    [0.68, 0.66, 0.61],
+    [1.14, 0.91, 0.68],
+  ],
+  [
+    [0.78, 0.84, 0.82],
+    [1.06, 1.02, 0.88],
+  ],
+  [
+    [0.72, 0.77, 0.72],
+    [1.04, 0.94, 0.76],
+  ],
+  [
+    [0.68, 0.6, 0.52],
+    [1.24, 0.83, 0.56],
+  ],
+];
+
+export function barkColour(x, y, z, seed, species, age = 1) {
   const rng = seededRandom(seed ^ 0x7131);
   const tone = rng();
+  const weather = patchNoise(
+    x * 1.8 + y * 0.09,
+    z * 1.8 - y * 0.13,
+    seed ^ 717,
+  );
   const flecks = patchNoise(x * 7 + y * 0.9, z * 7 - y * 1.3, seed);
-  const lichen = smooth(0.63, 0.85, flecks) * 0.22;
-  const base =
-    species === 1
-      ? [0.94, 0.96, 0.91]
-      : [0.84 + tone * 0.25, 0.82 + tone * 0.13, 0.76 + tone * 0.11];
-  return base.map((v, i) => v * (1 - lichen) + [0.78, 0.82, 0.69][i] * lichen);
+  const lichen =
+    smooth(0.56, 0.79, flecks * 0.65 + weather * 0.35) * (0.12 + age * 0.12);
+  // Species palettes and long vertical weathering patches live in vertex colour,
+  // so normal maps, branch unions and captured HLODs retain the same variation.
+  const [a, b] = barkPalettes[species % 4];
+  const value = 0.82 + weather * 0.32;
+  return a.map(
+    (v, i) =>
+      (v + (b[i] - v) * tone) * value * (1 - lichen) +
+      [0.82, 0.86, 0.72][i] * lichen,
+  );
 }
 
 export function leafColour(x, y, z, seed) {
@@ -50,7 +79,7 @@ export function mossCoverage(x, y, z, seed, age = 1) {
 }
 
 export function barkReflectance(x, y, z, seed, species, age) {
-  const base = barkColour(x, y, z, seed, species);
+  const base = barkColour(x, y, z, seed, species, age);
   const coverage = mossCoverage(x, y, z, seed, age);
   return base.map(
     (v, i) =>

@@ -6,6 +6,7 @@ import {
   sampleHydrology,
 } from "./terrain-math.js";
 import { bankExposure, bankGravel } from "./riverbank.js";
+import { carveRiverHeight } from "./river-profile.js";
 import { buildRiverData } from "./river-data.js";
 import { nearestRoutePoint } from "./route-network.js";
 export function generateTerrain() {
@@ -147,20 +148,7 @@ export function generateTerrain() {
         groundInfluence[i * 4 + 2] = Math.round(bank * 255);
         groundInfluence[i * 4 + 3] = Math.round(bankGravel(wx, wz) * 255);
       }
-      const bedDepth = 0.55 + h.width * 0.14;
-      const cross = h.distance / Math.max(1, h.width);
-      const channel = h.level - bedDepth + bedDepth * Math.pow(cross, 2.4);
-      if (cross < 1.3) heights[i] = Math.min(heights[i], channel);
-      else {
-        const flood = Math.exp(
-          -Math.pow((h.distance - h.width) / (8 + h.width), 2),
-        );
-        heights[i] = Math.min(
-          heights[i],
-          heights[i] * (1 - flood * 0.45) +
-            (h.level + 0.4 + (h.distance - h.width) * 0.13) * flood * 0.45,
-        );
-      }
+      heights[i] = carveRiverHeight(heights[i], wx, wz, h);
     }
   for (let z = 0; z < N; z++)
     for (let x = 0; x < N; x++) {

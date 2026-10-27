@@ -2,6 +2,7 @@ import terrainGenerationSource from "./terrain-generation.js?raw";
 import watershedSource from "./watershed.js?raw";
 import terrainNoiseSource from "./terrain-noise.js?raw";
 import riverbankSource from "./riverbank.js?raw";
+import riverProfileSource from "./river-profile.js?raw";
 import { createNightWorld } from "./night-world.js";
 import { buildDeadwood } from "./deadwood.js";
 import deadwoodSource from "./deadwood-data.js?raw";
@@ -922,6 +923,7 @@ async function loadAssets() {
       watershedSource +
       terrainNoiseSource +
       riverbankSource +
+      riverProfileSource +
       terrainGenerationSource +
       terrainSnapshotSource +
       vegetationSource +
@@ -955,6 +957,7 @@ async function loadAssets() {
       watershedSource +
       terrainNoiseSource +
       riverbankSource +
+      riverProfileSource +
       terrainGenerationSource +
       terrainSnapshotSource +
       impostorSource +
@@ -1357,7 +1360,12 @@ async function start() {
         const requests = grassPreparation;
         grassPreparation = [];
         const page = new T.Group();
-        for (const request of requests) page.add(request.group);
+        for (const request of requests) {
+          // Recycled groups were hidden on retirement. They are unpublished here,
+          // so include their children in both colour and cutout-depth preparation.
+          request.group.visible = true;
+          page.add(request.group);
+        }
         try {
           await prepareForRender(
             renderer,
@@ -1368,6 +1376,9 @@ async function start() {
             null,
             1,
             () => Math.min(...requests.map((request) => request.priority())),
+          );
+          await preparedSunShadow.prepare(renderer, page, scene, () =>
+            Math.min(...requests.map((request) => request.priority())),
           );
           for (const request of requests) request.resolve();
         } catch (error) {
@@ -1423,6 +1434,7 @@ async function start() {
       watershedSource +
       terrainNoiseSource +
       riverbankSource +
+      riverProfileSource +
       JSON.stringify([world.trees, world.deadwood]),
   );
   await bake();

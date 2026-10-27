@@ -179,6 +179,30 @@ for (let i = 0; i < COUNT; i++) {
   });
 }
 
+// Shared node turns keep erosion continuous along adjoining reaches. At forks,
+// the incoming direction is weighted by catchment area rather than segment order.
+const incoming = new Map(),
+  outgoing = new Map(),
+  turns = new Map();
+for (const s of riverSegments) {
+  outgoing.set(s.node, s);
+  const v = incoming.get(s.receiver) || [0, 0];
+  v[0] += s.fx * s.area;
+  v[1] += s.fz * s.area;
+  incoming.set(s.receiver, v);
+}
+for (const [node, s] of outgoing) {
+  const v = incoming.get(node);
+  turns.set(
+    node,
+    v ? Math.atan2(v[0] * s.fz - v[1] * s.fx, v[0] * s.fx + v[1] * s.fz) : 0,
+  );
+}
+for (const s of riverSegments) {
+  s.bendA = turns.get(s.node) || 0;
+  s.bendB = turns.get(s.receiver) || 0;
+}
+
 // Raster index of the nearest channel, with a halo for interpolation. Local
 // consumers evaluate exact segment distance from four indexed candidates.
 const INDEX_N = 641,
@@ -255,11 +279,19 @@ export function sampleHydrology(x, z, out) {
     out.level = 0;
     out.width = 0;
     out.wetness = 0;
+    out.cutBank = 0;
+    out.pointBar = 0;
     return out;
   }
   const s = riverSegments[found];
   out.level = s.ay + (s.by - s.ay) * along;
   out.width = s.wa + (s.wb - s.wa) * along;
+  const side =
+    ((x - s.ax) * -s.fz + (z - s.az) * s.fx) / Math.max(1, out.width);
+  const bend = s.bendA + (s.bendB - s.bendA) * along;
+  const erosion = clamp(-side * bend * 2.4, -1, 1);
+  out.cutBank = Math.max(0, erosion);
+  out.pointBar = Math.max(0, -erosion);
   out.wetness = Math.exp(
     -Math.max(0, out.distance - out.width) / (14 + out.width * 3),
   );

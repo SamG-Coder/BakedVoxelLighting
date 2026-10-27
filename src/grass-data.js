@@ -71,7 +71,7 @@ export function generateGrassBatches({ x, z, seed, level, land }) {
         h = grassHabitat(xx, zz, land);
       if (!grassAllowed(land, rng) || rng() > h.density) continue;
       const scale = (0.72 + rng() * 0.4) * h.height,
-        width = 0.72 + rng() * 0.56,
+        width = (0.72 + rng() * 0.56) * h.width,
         a = h.flow + (rng() - 0.5) * 2,
         c = Math.cos(a) * width,
         s = Math.sin(a) * width,

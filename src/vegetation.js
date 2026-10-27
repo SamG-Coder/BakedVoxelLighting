@@ -466,6 +466,7 @@ function grassMesh(assets, batch, capacity = batch.matrices.length / 16) {
   mesh.instanceCount = batch.matrices.length / 16;
   mesh.userData.ownedGeometry = true;
   mesh.userData.grassCard = true;
+  mesh.castShadow = true;
   mesh.receiveShadow = true;
   return mesh;
 }

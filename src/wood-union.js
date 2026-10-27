@@ -228,7 +228,7 @@ export function unionWood(paths, plant, coarse = false) {
       u / total + (plant.seed % 71) * 0.173,
       v / total + (plant.seed % 53) * 0.137,
     );
-    colour.push(...barkColour(...p, plant.seed, plant.species));
+    colour.push(...barkColour(...p, plant.seed, plant.species, plant.age));
     return i;
   }
   function triangle(a, b, c) {
