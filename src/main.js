@@ -62,6 +62,7 @@ import treeGridSource from "./voxel-tree-grid.js?raw";
 import detailSource from "./voxel-core.js?raw";
 import voxelWorkerSource from "./voxel-worker.js?raw";
 import grassDataSource from "./grass-data.js?raw";
+import grassPatchShapeSource from "./grass-patch-shape.js?raw";
 import terrainMathSource from "./terrain-math.js?raw";
 import terrainSnapshotSource from "./terrain-snapshot.js?raw";
 import mergedDataSource from "./merged-data.js?raw";
@@ -939,6 +940,7 @@ async function loadAssets() {
       plantAtlasSource +
       grassWorkerSource +
       grassDataSource +
+      grassPatchShapeSource +
       atlasWorkerSource +
       nativeSource +
       nativeVolumeSource +

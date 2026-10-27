@@ -5,6 +5,7 @@ import {
   grassHabitat,
   grassAllowed,
   grassColour,
+  chooseGrass,
 } from "./habitat.js";
 export function grassLand(x, z, sample) {
   const land = new Float32Array(13 * 13 * 9);
@@ -70,10 +71,13 @@ export function generateGrassBatches({ x, z, seed, level, land }) {
         h = grassHabitat(xx, zz, land);
       if (!grassAllowed(land, rng) || rng() > h.density) continue;
       const scale = (0.72 + rng() * 0.4) * h.height,
+        width = 0.72 + rng() * 0.56,
         a = h.flow + (rng() - 0.5) * 2,
-        c = Math.cos(a) * scale,
-        s = Math.sin(a) * scale,
-        b = groups[h.patch];
+        c = Math.cos(a) * width,
+        s = Math.sin(a) * width,
+        // Match the near population's habitat proportions instead of snapping
+        // every distant colony to the single dominant mix at a field boundary.
+        b = groups[chooseGrass(h.mixes, rng())];
       b.matrices.push(
         c,
         0,

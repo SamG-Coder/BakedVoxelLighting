@@ -16,6 +16,7 @@ import {
 export { grassHabitat } from "./habitat.js";
 import { prepareAtlasMips } from "./atlas-mips.js";
 import { shareAtlasBase } from "./atlas-storage.js";
+import { grassPatchEdge } from "./grass-patch-shape.js";
 import { buildGrassBatches } from "./grass-jobs.js";
 import { GrassStreamQueue } from "./grass-stream-queue.js";
 import { PreparationQueue } from "./preparation-queue.js";
@@ -724,7 +725,11 @@ export async function bakeGrassLOD(
       root: 0,
       riverDistance: 100,
     });
-    for (const p of grassPopulation(0, 0, 981 + k, 37, 2.5, sample, habitat))
+    for (const p of grassPopulation(0, 0, 981 + k, 64, 2.8, sample, habitat)) {
+      const edge = grassPatchEdge(p.x, p.z, k);
+      if (edge === 0) continue;
+      p.sy *= 0.36 + edge * 0.64;
+      p.sx *= 0.62 + edge * 0.38;
       for (let j = 0; j < 2; j++) {
         const a = p.angle + j * Math.PI * 0.5,
           c = Math.cos(a),
@@ -750,6 +755,7 @@ export async function bakeGrassLOD(
         batch.colours.push(...p.colour);
         batch.types.push(p.type);
       }
+    }
     for (const key of Object.keys(batch))
       batch[key] = new Float32Array(batch[key]);
     source.add(grassMesh(grass.assets, batch));
@@ -762,7 +768,7 @@ export async function bakeGrassLOD(
       256,
       8,
       cache,
-      "grass-surface:" + identity + ":" + k,
+      "grass-surface-tapered-v1:" + identity + ":" + k,
       { grassPatch: true },
     );
     grass.templates.push(atlas);

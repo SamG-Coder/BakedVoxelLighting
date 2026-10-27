@@ -196,3 +196,13 @@ Validation:
 - Local evidence: `evidence/shader-budget-control*.json`, `shader-budget-after*.json`, `shader-budget-world.png` and `shader-budget-night.png`.
 
 Current good: preparation no longer packs many shader stages into one presentation interval, existing LODs remain visible until replacement readiness, and the natural-world assets/settings are retained. Current bad: occasional 33.3ms intervals still miss smooth 60 FPS, memory remains high, and visual work on crossings, distant lighting and grass repetition is still outstanding. Next performance target is long-session residency/retirement rather than more density reduction.
+
+## Selected visual improvement: softer meadow colonies
+
+Visual work is the current priority. The L2 grass bake previously scattered its source plants across a square and chose only the dominant habitat type for each distant colony. The new source layout has an irregular lobed outline, shorter plants at the margins, and independent width/height variation. Distant colonies now sample the same habitat proportions used by the nearby population, blending dry grass, meadow flowers and understory through habitat boundaries. All eight captured views and their normal maps come from the shaped source plants; the silhouette is not a camera-facing runtime mask. Cache identity includes the shape source so existing users receive the revised bakes.
+
+Validation: production build and the existing habitat continuity/worker parity checks pass. The WebGPU world loaded without captured runtime errors and was inspected at the open riverbank and elevated valley views. The nearby flower meadow remains intact. This is a bounded improvement to L2 silhouettes and species mixing, not a complete solution to grass repetition: isolated near-bank tufts still look too uniform, and the distant ground cover remains flatter than the foreground. Local evidence: `evidence/meadow-visual-after.png`.
+
+Current good: dense mixed foreground grasses and flowers, habitat-based placement, irregular baked meadow colonies, connected routes and continuous river joins. Current visual priorities: improve the visible tufts along bare banks, strengthen distant ground-cover texture agreement, reconcile distant tree lighting, then refine river surface/shore transitions and crossings.
+
+An already-completed cleanup in the preceding commit shares identical atlas base pixels with mip level zero. A bounded ownership census found 296,706,332 fewer duplicate CPU buffer bytes; pixels and all mip levels are unchanged. This is retained maintenance, not the focus of the visual pass or a total-memory claim.
