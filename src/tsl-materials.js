@@ -345,6 +345,17 @@ function createDecorated(original, options, U, grid) {
       .mul(N.vec3(mirror, 1, 1));
     const wn = K.grassNormal({ detail, yaw: yawNode() });
     m.normalNode = N.normalize(N.cameraViewMatrix.mul(N.vec4(wn, 0)).xyz);
+    // The crossed cards carry a volume of blades; they are not two solid
+    // vertical walls. Receive external shadows at the tuft's upper envelope
+    // instead of letting one carrier slice a black stripe across the other.
+    // Casting is unchanged, so the grass still shades the soil underneath.
+    const tuftHeight = N.varying(
+      N.length(N.modelWorldMatrix.mul(instanceMatrix().element(1)).xyz),
+    );
+    const lift = tuftHeight.mul(N.float(1).sub(N.uv().y).mul(0.95)).add(0.06);
+    m.receivedShadowPositionNode = N.positionWorld.add(N.vec3(0, lift, 0));
+    // Retain gentle root occlusion without a directional card-shaped seam.
+    m.aoNode = N.mix(0.8, 1, N.smoothstep(0.02, 0.7, N.uv().y));
   }
   const bake = (p) => sampleRadiance(U, p);
   const bent = sampleVolume(
