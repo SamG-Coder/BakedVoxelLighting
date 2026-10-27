@@ -870,6 +870,9 @@ async function loadAssets() {
     bakedMap.minFilter = T.LinearMipmapLinearFilter;
     bakedMap.magFilter = T.LinearFilter;
     bakedMap.needsUpdate = true;
+    // Level zero is already the exact normal bake. Retaining the separately
+    // loaded normal record as image.data duplicates a full-resolution buffer.
+    normal.image.data = mipRecord[0].normals;
     normal.mipmaps = mipRecord.map((l) => ({
       data: l.normals,
       width: l.width,

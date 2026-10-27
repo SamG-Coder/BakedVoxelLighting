@@ -15,6 +15,7 @@ import {
 } from "./habitat.js";
 export { grassHabitat } from "./habitat.js";
 import { prepareAtlasMips } from "./atlas-mips.js";
+import { shareAtlasBase } from "./atlas-storage.js";
 import { buildGrassBatches } from "./grass-jobs.js";
 import { GrassStreamQueue } from "./grass-stream-queue.js";
 import { PreparationQueue } from "./preparation-queue.js";
@@ -1144,8 +1145,10 @@ async function bakeGrassSurface(renderer, cache, identity, assets) {
       mips,
       topDown: true,
     };
+    shareAtlasBase(record);
     await cache.put(key, record);
   }
+  shareAtlasBase(record);
   for (const [channel, name] of [
     ["data", "grassSurface"],
     ["normals", "grassSurfaceNormal"],

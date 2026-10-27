@@ -41,18 +41,11 @@ function makeAtlas(prototypes) {
   const first = prototypes[0].farAtlas.record,
     w = first.w,
     h = first.h * prototypes.length;
-  const colour = new Uint8Array(w * h * 4),
-    normal = new Uint8Array(w * h * 4);
-  prototypes.forEach((p, i) => {
-    colour.set(p.farAtlas.record.data, i * w * first.h * 4);
-    normal.set(p.farAtlas.record.normals, i * w * first.h * 4);
-  });
-  const textures = [colour, normal].map((data) => {
-    const t = new T.DataTexture(data, w, h);
+  const textures = [false, true].map((normalMap) => {
+    const t = new T.DataTexture(null, w, h);
     t.magFilter = T.LinearFilter;
     t.minFilter = T.LinearMipmapLinearFilter;
     t.generateMipmaps = false;
-    const normalMap = data === normal;
     t.mipmaps = first.mips.map((level, lod) => {
       const pixels = new Uint8Array(
         level.width * level.height * prototypes.length * 4,
@@ -71,6 +64,7 @@ function makeAtlas(prototypes) {
         height: level.height * prototypes.length,
       };
     });
+    t.image.data = t.mipmaps[0].data;
     t.needsUpdate = true;
     return t;
   });

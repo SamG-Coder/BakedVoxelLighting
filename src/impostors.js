@@ -1,4 +1,5 @@
 import { prepareAtlasMips } from "./atlas-mips.js";
+import { shareAtlasBase } from "./atlas-storage.js";
 import * as N from "three/tsl";
 import { readPixels } from "./tsl-baking.js";
 import { billboardTSL, grassAtlasUV } from "./tsl-materials.js";
@@ -162,6 +163,7 @@ export async function captureSurface(
         cutoff: options.topDown ? 0 : 82,
       };
       record.mips = await prepareAtlasMips(record);
+      shareAtlasBase(record);
       await cache.put(key, record);
     } finally {
       for (const [mesh, m] of saved) mesh.material = m;
@@ -182,6 +184,7 @@ export async function captureSurface(
       target.dispose();
     }
   }
+  shareAtlasBase(record);
   const texture = new T.DataTexture(
       record.data,
       record.w,
