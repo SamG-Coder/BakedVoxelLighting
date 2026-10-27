@@ -9,6 +9,7 @@ import {
 import { height, random } from "./world-data.js";
 import { instanced } from "./impostors.js";
 import { buildRiver } from "./river.js";
+import { prioritizeArea } from "./streaming-view.js";
 const terrainTiles = [];
 function terrainSurface(x, z, segments) {
   const size = TERRAIN_SIZE / 32,
@@ -69,18 +70,42 @@ export function updateTerrain(camera) {
     Math.abs(terrainEye.z - p.z) < 0.001
   )
     return;
-  terrainEye = { x: p.x, z: p.z };
+  terrainEye ||= { x: p.x, z: p.z };
+  terrainEye.x = p.x;
+  terrainEye.z = p.z;
   for (const tile of terrainTiles) {
     const d = Math.hypot(
       camera.position.x - tile.x,
       camera.position.z - tile.z,
     );
     const level = d < 260 ? 0 : d < 850 ? 1 : 2;
+    tile.requestedLevel = level;
+    tile.distance = d;
+    // Keep the whole-world coarse surface. Release only hidden high-detail GPU
+    // allocations well outside their ring; CPU vertices remain ready to upload.
+    for (let i = 0; i < 2; i++) {
+      const mesh = tile.levels[i];
+      if (
+        d > (i === 0 ? 390 : 1050) &&
+        !mesh.visible &&
+        mesh.userData.pipelineReady &&
+        !mesh.userData.preparation
+      ) {
+        mesh.dispatchEvent({ type: "dispose" });
+        mesh.geometry.dispose();
+        mesh.userData.pipelineReady = false;
+        mesh.userData.hasPreparedResources = false;
+      }
+    }
     const requested = tile.levels[level];
     if (prepareTerrain && !requested.userData.pipelineReady) {
       if (!requested.userData.residencyRequested) {
         requested.userData.residencyRequested = true;
-        prepareTerrain(requested)
+        prepareTerrain(requested, () =>
+          tile.requestedLevel === level
+            ? prioritizeArea(tile.center, tile.distance, 100)
+            : Infinity,
+        )
           .then(() => {
             terrainEye = null; // completed pages invalidate the distance decision
           })
@@ -91,7 +116,8 @@ export function updateTerrain(camera) {
       }
       continue; // keep the existing terrain surface until the new mesh is resident
     }
-    tile.levels.forEach((mesh, i) => (mesh.visible = i === level));
+    for (let i = 0; i < tile.levels.length; i++)
+      tile.levels[i].visible = i === level;
   }
 }
 export function buildEnvironment(scene, assets) {
@@ -170,7 +196,12 @@ export function buildEnvironment(scene, assets) {
           return mesh;
         },
       );
-      terrainTiles.push({ x: cx, z: cz, levels });
+      terrainTiles.push({
+        x: cx,
+        z: cz,
+        center: new T.Vector3(cx, height(cx, cz), cz),
+        levels,
+      });
     }
   scene.add(ground);
   const water = buildRiver(scene, height, lightUniforms);

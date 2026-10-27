@@ -11,6 +11,26 @@ import {
 import { updateLOD, replaceLODLevel } from "../src/vegetation-lod.js";
 
 const distances = [85, 190, 420];
+
+test("walking reuses LOD state and keeps fade coverage intact", () => {
+  const f = fixture([0, 1, 2, 3]);
+  f.draw(70, 0);
+  const blend = f.c.lodBlend;
+  const target = blend.target;
+  const weights = blend.weights;
+  const state = f.items.lodState;
+  const counts = state.counts;
+  for (let frame = 1; frame <= 240; frame++) {
+    // Cross a handoff in both directions without replacing its working buffers.
+    f.draw(70 + 30 * Math.sin(frame / 25), frame * 16.667);
+    assert.equal(f.c.lodBlend, blend);
+    assert.equal(blend.target, target);
+    assert.equal(blend.weights, weights);
+    assert.equal(f.items.lodState, state);
+    assert.equal(f.items.lodState.counts, counts);
+    coverage(f);
+  }
+});
 function group(ready = false) {
   const result = new Group();
   const material = new MeshBasicMaterial();

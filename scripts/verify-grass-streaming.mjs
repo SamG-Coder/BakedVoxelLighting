@@ -160,3 +160,54 @@ test("grass requested while still in ground-only LOD is released beyond retentio
   updateLOD([c], { position: new Vector3() }, -1, [38, 82, 155], new Scene());
   assert.equal(releases, 1);
 });
+
+test("cached grass queries refresh across cells and retain outgoing tiles for release", () => {
+  const make = (x) => ({
+    kind: "grass",
+    center: new Vector3(x, 0, 0),
+    current: 3,
+    levels: [null, null, null, new Group()],
+    pending: new Map(),
+  });
+  const near = make(0),
+    far = make(1000),
+    items = [near, far];
+  let lookups = 0;
+  items.grid = new Map([
+    ["83:83", near],
+    ["125:83", far],
+  ]);
+  const get = items.grid.get.bind(items.grid);
+  items.grid.get = (key) => {
+    lookups++;
+    return get(key);
+  };
+  items.active = new Set();
+  const active = items.active,
+    camera = { position: new Vector3() },
+    scene = new Scene();
+  updateLOD(items, camera, -1, [38, 82, 155], scene, 0);
+  const queries = lookups;
+  const scratch = items.lodCandidates;
+  camera.position.x = 1;
+  updateLOD(items, camera, -1, [38, 82, 155], scene, 16);
+  assert.equal(lookups, queries, "no string grid lookups within the same cell");
+  assert.equal(items.active, active);
+  assert.equal(items.lodCandidates, scratch);
+  let releases = 0;
+  near.levels[0] = new Group();
+  near.release = () => {
+    releases++;
+    near.levels[0] = null;
+  };
+  camera.position.x = 1000;
+  updateLOD(items, camera, -1, [38, 82, 155], scene, 32);
+  assert.ok(lookups > queries);
+  assert.equal(
+    releases,
+    1,
+    "old active tile survives the query long enough to retire",
+  );
+  assert.ok(items.active.has(far));
+  assert.ok(!items.active.has(near));
+});

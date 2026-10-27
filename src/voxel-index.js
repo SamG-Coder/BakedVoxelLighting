@@ -15,7 +15,7 @@ export function indexVoxelWorld(world) {
   for (const mesh of world.voxelMeshes) {
     if (!mesh.geometry.boundingSphere) mesh.geometry.computeBoundingSphere();
     mesh.updateWorldMatrix(true, false);
-    for (let i = 0; i < mesh.count; i++) {
+    for (let i = 0; i < (mesh.instanceCount ?? mesh.count); i++) {
       mesh.getMatrixAt(i, matrix);
       matrix.premultiply(mesh.matrixWorld);
       matrix.decompose(position, rotation, scale);

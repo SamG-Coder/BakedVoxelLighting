@@ -5,8 +5,9 @@ export class FrameClock {
   }
   reset() {
     this.last = null;
-    this.samples = [];
-    this.work = [];
+    this.samples ||= [];
+    this.work ||= [];
+    this.samples.length = this.work.length = 0;
   }
   begin(now, paused = false) {
     if (paused) {
@@ -17,8 +18,7 @@ export class FrameClock {
     this.last = now;
     // Background/resume and suspended callbacks are not a new steady frame rate.
     if (elapsed > 250) {
-      this.samples = [];
-      this.work = [];
+      this.samples.length = this.work.length = 0;
     }
     this.samples.push(now);
     while (this.samples.length > 2 && this.samples[0] < now - 750) {

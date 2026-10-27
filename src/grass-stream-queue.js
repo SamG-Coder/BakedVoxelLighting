@@ -1,6 +1,8 @@
 // Keep the worker fed while previous tiles wait for renderer/GPU residency.
 // Renderer preparation still serializes GPU state and enforces upload credits.
 import { prioritizeArea } from "./streaming-view.js";
+const preloadWidths = [6, 15, 32];
+const compareJobs = (a, b) => a.score - b.score;
 export class GrassStreamQueue {
   constructor({ concurrency = 4, schedule = (fn) => setTimeout(fn, 0) } = {}) {
     this.concurrency = concurrency;
@@ -23,7 +25,7 @@ export class GrassStreamQueue {
   }
 
   enqueue(p, level, generation) {
-    this.jobs.push({ p, level, generation, time: performance.now() });
+    this.jobs.push({ p, level, generation, time: performance.now(), score: 0 });
     this.stats.queued = this.jobs.length;
     this.kick();
   }
@@ -46,19 +48,25 @@ export class GrassStreamQueue {
   }
 
   pump() {
-    this.jobs = this.jobs.filter((job) => {
-      if (this.wanted(job)) return true;
-      const { p, level, generation } = job;
-      if (p.pending.get(level) === generation) p.pending.delete(level);
-      this.stats.cancelled++;
-      return false;
-    });
+    let retained = 0;
+    for (let i = 0; i < this.jobs.length; i++) {
+      const job = this.jobs[i];
+      if (this.wanted(job)) {
+        // Frustum priority is refreshed once per pump, not once per comparison.
+        job.score = prioritizeArea(
+          job.p.center,
+          job.p.requestPriority[job.level],
+        );
+        this.jobs[retained++] = job;
+      } else {
+        const { p, level, generation } = job;
+        if (p.pending.get(level) === generation) p.pending.delete(level);
+        this.stats.cancelled++;
+      }
+    }
+    this.jobs.length = retained;
     this.stats.queued = this.jobs.length;
-    this.jobs.sort(
-      (a, b) =>
-        prioritizeArea(a.p.center, a.p.requestPriority[a.level]) -
-        prioritizeArea(b.p.center, b.p.requestPriority[b.level]),
-    );
+    this.jobs.sort(compareJobs);
     while (this.jobs.length && this.running < this.concurrency) {
       const job = this.jobs.shift(),
         { p, level, generation } = job;
@@ -108,18 +116,24 @@ export function requestGrassAhead(
   // Nearby fine preloads precede distant grass, but a tile's visible LOD
   // precedes its own speculative work. The coarsest resident
   // geometry covers the ground while finer detail is preparing.
-  c.requestPriority = [Infinity, Infinity, Infinity];
+  c.requestPriority ||= [Infinity, Infinity, Infinity];
+  c.requestPriority.fill(Infinity);
   for (let i = 0; i < 3; i++) {
     if (weights[i] > 0) c.requestPriority[i] = distance;
     else if (
       Math.min(distance, predictedDistance) <
-        distances[i] + [6, 15, 32][i] + 24 &&
+        distances[i] + preloadWidths[i] + 24 &&
       (i === 0 || Math.max(distance, predictedDistance) > distances[i - 1] - 12)
     )
       c.requestPriority[i] =
         (i === 2 ? 500 : 32) + Math.min(distance, predictedDistance);
   }
-  if (distance < distances[2] + 32 && !c.levels.slice(0, 3).some(Boolean))
+  if (
+    distance < distances[2] + 32 &&
+    !c.levels[0] &&
+    !c.levels[1] &&
+    !c.levels[2]
+  )
     c.requestPriority[2] = Math.min(c.requestPriority[2], distance + 5);
   for (let i = 0; i < 3; i++)
     if (Number.isFinite(c.requestPriority[i])) c.ensure?.(i);

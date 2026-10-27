@@ -50,9 +50,15 @@ export function prepareForRender(
       await afterFrame();
       if (priority && !Number.isFinite(priority())) return;
       object.updateMatrixWorld(true);
-      const saved = [];
+      // Capture/restore happens synchronously, before compileAsync yields.
+      // Reuse the queue's scratch storage instead of one tuple per scene object.
+      const saved = (queue.savedObjects ||= []);
+      const savedFlags = (queue.savedFlags ||= []);
+      let savedCount = 0;
       object.traverse((o) => {
-        saved.push([o, o.visible, o.frustumCulled]);
+        saved[savedCount] = o;
+        savedFlags[savedCount++] =
+          (o.visible ? 1 : 0) | (o.frustumCulled ? 2 : 0);
         o.frustumCulled = false;
       });
       object.visible = true;
@@ -81,9 +87,12 @@ export function prepareForRender(
         renderer.setRenderTarget(previous);
         contexts.get = getContext;
         if (substituteMaterial) object.material = sourceMaterial;
-        for (const [o, visible, culled] of saved) {
-          o.visible = visible;
-          o.frustumCulled = culled;
+        for (let i = 0; i < savedCount; i++) {
+          const o = saved[i],
+            flags = savedFlags[i];
+          o.visible = !!(flags & 1);
+          o.frustumCulled = !!(flags & 2);
+          saved[i] = null;
         }
         preparationMs += performance.now() - started;
         rendererJobStats.maxStartMs = Math.max(

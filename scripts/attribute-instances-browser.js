@@ -1,6 +1,7 @@
 import * as T from "three/webgpu";
 import { AttributeInstances } from "../src/attribute-instances.js";
 import { readPixels } from "../src/tsl-baking.js";
+import { PreparedSunShadow } from "../src/prepared-shadows.js";
 const out = document.querySelector("#result");
 try {
   const renderer = new T.WebGPURenderer({
@@ -19,7 +20,18 @@ try {
   scene.add(sun);
   const target = new T.RenderTarget(128, 128);
   renderer.setRenderTarget(target);
-  const make = () => new T.MeshStandardNodeMaterial({ roughness: 0.8 });
+  const depth = location.search.includes("depth=1");
+  const shadow = new PreparedSunShadow(sun);
+  const alpha = new T.DataTexture(new Uint8Array([
+    255, 255, 255, 255, 255, 255, 255, 0,
+    255, 255, 255, 0, 255, 255, 255, 255,
+  ]), 2, 2);
+  alpha.needsUpdate = true;
+  const make = () => {
+    const source = new T.MeshStandardNodeMaterial({ roughness: 0.8,
+      ...(depth ? { map: alpha, alphaTest: 0.4 } : {}) });
+    return depth ? shadow.materialFor(source) : source;
+  };
   const native = new T.InstancedMesh(
     new T.CylinderGeometry(0.2, 0.5, 3, 7),
     make(),
@@ -106,6 +118,7 @@ try {
     maxDifference,
     statesBefore,
     statesAfter,
+    depth,
   });
 } catch (error) {
   out.textContent = JSON.stringify({

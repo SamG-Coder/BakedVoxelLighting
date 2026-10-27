@@ -10,6 +10,19 @@ import {
 import * as N from "three/tsl";
 import { prepareForRender } from "./renderer-jobs.js";
 
+// Material instances may differ only in their fade uniforms. Recreating these
+// equivalent nodes per material prevents sharing of the depth shader graph.
+const depthColour = N.vec4(0, 0, 0, 1);
+const opaque = N.float(1);
+const alphaNodes = new WeakMap();
+function depthOpacity(source) {
+  if (source.opacityNode) return source.opacityNode;
+  if (!source.map) return opaque;
+  let node = alphaNodes.get(source.map);
+  if (!node) alphaNodes.set(source.map, (node = N.texture(source.map).a));
+  return node;
+}
+
 // With inactive-light shadows skipped, a cube map can be sampled long before
 // its first shadow draw. Allocate the render attachment before shader bindings
 // capture it; otherwise the first draw replaces/destroys the sampled GPU image.
@@ -93,10 +106,8 @@ export class PreparedSunShadow extends ShadowNode {
       material.positionNode =
         source.castShadowPositionNode || source.positionNode;
       material.maskNode = source.maskShadowNode || source.maskNode;
-      material.colorNode = N.vec4(0, 0, 0, 1);
-      material.opacityNode =
-        source.opacityNode ||
-        (source.map ? N.texture(source.map).a : N.float(1));
+      material.colorNode = depthColour;
+      material.opacityNode = depthOpacity(source);
       material.alphaTest = source.alphaTest;
       material.userData.fade = source.userData.fade;
       this.materials.set(source, material);

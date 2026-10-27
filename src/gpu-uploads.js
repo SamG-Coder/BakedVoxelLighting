@@ -8,6 +8,7 @@ import {
   HalfFloatType,
 } from "three/webgpu";
 import { GPUUploadQueue, UPLOAD_LIMITS } from "./gpu-upload-queue.js";
+import { installGeometryLeases } from "./shared-geometry.js";
 
 const managers = new WeakMap(),
   live = new Set();
@@ -125,6 +126,7 @@ class PagedUploads {
   }
 
   install() {
+    installGeometryLeases(this.renderer);
     const backend = this.backend,
       manager = this,
       utils = backend.attributeUtils;
@@ -174,9 +176,10 @@ class PagedUploads {
                 // target. Otherwise indexed draws can fail WebGL validation even
                 // though the copied bytes read back correctly. Detach the cached
                 // VAO first so allocation cannot replace its element binding.
-                const target = type === gl.ELEMENT_ARRAY_BUFFER
-                  ? gl.ELEMENT_ARRAY_BUFFER
-                  : gl.COPY_WRITE_BUFFER;
+                const target =
+                  type === gl.ELEMENT_ARRAY_BUFFER
+                    ? gl.ELEMENT_ARRAY_BUFFER
+                    : gl.COPY_WRITE_BUFFER;
                 if (target === gl.ELEMENT_ARRAY_BUFFER)
                   backend.state.resetVertexState();
                 gl.bindBuffer(target, b);

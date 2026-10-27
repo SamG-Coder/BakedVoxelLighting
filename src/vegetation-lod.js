@@ -3,15 +3,17 @@ import { requestGrassAhead } from "./grass-stream-queue.js";
 import { prioritizeArea, updateStreamingView } from "./streaming-view.js";
 const handoffMs = 240;
 const preparing = new WeakSet();
+const treeBlendWidths = [14, 26, 45];
+const grassBlendWidths = [12, 30, 64];
 
 function setFade(group, low, high) {
-  group.traverse((object) => {
-    const materials = Array.isArray(object.material)
-      ? object.material
-      : [object.material];
-    for (const material of materials)
-      material?.userData.fade?.value.set(low, high);
-  });
+  const material = group.material;
+  if (Array.isArray(material)) {
+    for (let i = 0; i < material.length; i++)
+      material[i]?.userData.fade?.value.set(low, high);
+  } else material?.userData.fade?.value.set(low, high);
+  for (let i = 0; i < group.children.length; i++)
+    setFade(group.children[i], low, high);
 }
 
 function present(c, weights, scene) {
@@ -33,19 +35,22 @@ function present(c, weights, scene) {
 
 function advance(c, now, scene, transitions) {
   const state = c.lodBlend;
-  const difference = Math.max(
-    ...state.target.map((v, i) => Math.abs(v - state.weights[i])),
-  );
-  if (
-    difference === 0 &&
-    !transitions.has(c) &&
-    c.levels.every(
-      (object, i) =>
-        !object ||
-        (object.visible === state.weights[i] > 0 &&
-          (!object.visible || object.parent === scene)),
+  let difference = 0,
+    presented = true;
+  for (let i = 0; i < 4; i++) {
+    difference = Math.max(
+      difference,
+      Math.abs(state.target[i] - state.weights[i]),
+    );
+    const object = c.levels[i];
+    if (
+      object &&
+      (object.visible !== state.weights[i] > 0 ||
+        (object.visible && object.parent !== scene))
     )
-  ) {
+      presented = false;
+  }
+  if (difference === 0 && !transitions.has(c) && presented) {
     state.time = now;
     return;
   }
@@ -107,13 +112,16 @@ export function updateLOD(
     Math.abs(previous.x - position.x) < 0.001 &&
     Math.abs(previous.y - position.y) < 0.001 &&
     Math.abs(previous.z - position.z) < 0.001 &&
-    previous.distances.every((v, i) => v === distances[i])
+    previous.distances[0] === distances[0] &&
+    previous.distances[1] === distances[1] &&
+    previous.distances[2] === distances[2]
   ) {
     // Only unfinished handoffs need work when the camera stops or just turns.
     for (const c of transitions) advance(c, now, scene, transitions);
     return previous.counts;
   }
-  const counts = [0, 0, 0, 0];
+  const counts = previous?.counts || [0, 0, 0, 0];
+  counts.fill(0);
   const elapsed = previous ? (now - previous.time) / 1000 : 0;
   let leadX = 0,
     leadZ = 0;
@@ -126,16 +134,42 @@ export function updateLOD(
   }
   let candidates = items;
   if (items.grid) {
-    candidates = new Set(items.active);
-    items.active = new Set();
+    // Keep the active set and scratch storage alive across frames. A numeric
+    // visit stamp deduplicates the query without rebuilding a Set every move.
+    candidates = items.lodCandidates ||= [];
+    candidates.length = 0;
+    const stamp = (items.lodVisit = (items.lodVisit || 0) + 1);
+    for (const p of items.active) {
+      p.lodVisit = stamp;
+      candidates.push(p);
+    }
+    items.active.clear();
     const gx = Math.floor((camera.position.x + 2000) / 24),
       gz = Math.floor((camera.position.z + 2000) / 24);
-    for (let z = gz - 16; z <= gz + 16; z++)
-      for (let x = gx - 16; x <= gx + 16; x++) {
-        const p = items.grid.get(`${x}:${z}`);
-        if (p) candidates.add(p);
+    const query = (items.lodGridQuery ||= {
+      x: NaN,
+      z: NaN,
+      grid: null,
+      cells: [],
+    });
+    if (query.x !== gx || query.z !== gz || query.grid !== items.grid) {
+      query.x = gx;
+      query.z = gz;
+      query.grid = items.grid;
+      query.cells.length = 0;
+      for (let z = gz - 16; z <= gz + 16; z++)
+        for (let x = gx - 16; x <= gx + 16; x++) {
+          const p = items.grid.get(`${x}:${z}`);
+          if (p) query.cells.push(p);
+        }
+    }
+    for (const p of query.cells) {
+      if (p.lodVisit !== stamp) {
+        p.lodVisit = stamp;
+        candidates.push(p);
       }
-    counts[3] = items.length - candidates.size;
+    }
+    counts[3] = items.length - candidates.length;
   }
   for (const c of candidates) {
     const d = c.center.distanceTo(camera.position);
@@ -155,7 +189,9 @@ export function updateLOD(
       if (
         c.current !== 3 ||
         c.pending?.size ||
-        c.levels.slice(0, 3).some(Boolean)
+        c.levels[0] ||
+        c.levels[1] ||
+        c.levels[2]
       ) {
         c.release?.();
         for (const object of c.levels) if (object) object.visible = false;
@@ -179,11 +215,14 @@ export function updateLOD(
     if (c.kind === "tree" && d > 650 && force >= 0) level = 3;
     counts[level]++;
     c.current = level;
-    const weights = [0, 0, 0, 0];
+    const weights = (c.lodTarget ||= [0, 0, 0, 0]);
+    weights.fill(0);
     weights[level] = 1;
     if (force < 0) {
       for (let i = 0; i < 3; i++) {
-        const width = c.kind === "tree" ? [14, 26, 45][i] : [12, 30, 64][i];
+        const width = (c.kind === "tree" ? treeBlendWidths : grassBlendWidths)[
+          i
+        ];
         if (Math.abs(d - distances[i]) < width / 2) {
           const blend = MathUtils.smoothstep(
             d,
@@ -205,9 +244,9 @@ export function updateLOD(
       );
       if (force < 0) requestGrassAhead(c, weights, d, predicted, distances);
       else {
-        c.requestPriority = weights
-          .slice(0, 3)
-          .map((w) => (w > 0 ? d : Infinity));
+        c.requestPriority ||= [Infinity, Infinity, Infinity];
+        for (let i = 0; i < 3; i++)
+          c.requestPriority[i] = weights[i] > 0 ? d : Infinity;
         for (let i = 0; i < 3; i++) if (weights[i] > 0) c.ensure?.(i);
       }
       if (d > 336) {
@@ -222,12 +261,14 @@ export function updateLOD(
     }
     if (c.kind === "tree")
       for (let i = 0; i < 2; i++) if (weights[i] > 0) c.ensure?.(i);
-    const resident = c.levels.map(
-      (object) =>
-        !!object && (!items.prepareGroup || object.userData.pipelineReady),
-    );
+    let resident = 0;
     for (let i = 0; i < 4; i++) {
-      if (weights[i] <= 0 || resident[i]) continue;
+      const object = c.levels[i];
+      if (object && (!items.prepareGroup || object.userData.pipelineReady))
+        resident |= 1 << i;
+    }
+    for (let i = 0; i < 4; i++) {
+      if (weights[i] <= 0 || resident & (1 << i)) continue;
       const object = c.levels[i];
       if (object && items.prepareGroup && !preparing.has(object)) {
         preparing.add(object);
@@ -246,7 +287,7 @@ export function updateLOD(
       // briefly switching to the coarsest resident LOD and then back again.
       let fallback = -1;
       for (let j = 0; j < 4; j++) {
-        if (!resident[j]) continue;
+        if (!(resident & (1 << j))) continue;
         const shown = c.lodBlend?.weights[j] || 0;
         const best = c.lodBlend?.weights[fallback] || 0;
         if (
@@ -260,14 +301,30 @@ export function updateLOD(
       weights[i] = 0;
     }
     const state = c.lodBlend;
+    let hasWeight = false,
+      missingResident = false;
+    if (state)
+      for (let i = 0; i < 4; i++) {
+        if (state.weights[i] > 0) {
+          hasWeight = true;
+          if (!(resident & (1 << i))) missingResident = true;
+        }
+      }
     if (
       (c.kind !== "tree" && c.kind !== "grass") ||
       (c.kind === "tree" && !items.prepareGroup) ||
       !state ||
-      state.weights.some((w, i) => w > 0 && !resident[i]) ||
-      !state.weights.some((w) => w > 0)
+      missingResident ||
+      !hasWeight
     ) {
-      c.lodBlend = { weights: [...weights], target: weights, time: now };
+      const blend = (c.lodBlend ||= {
+        weights: [0, 0, 0, 0],
+        target: weights,
+        time: now,
+      });
+      for (let i = 0; i < 4; i++) blend.weights[i] = weights[i];
+      blend.target = weights;
+      blend.time = now;
       transitions.delete(c);
       present(c, weights, scene);
     } else {
@@ -276,15 +333,13 @@ export function updateLOD(
       advance(c, now, scene, transitions);
     }
   }
-  items.lodState = {
-    x: position.x,
-    time: now,
-    y: position.y,
-    z: position.z,
-    force,
-    revision,
-    distances: [...distances],
-    counts,
-  };
+  const next = (items.lodState ||= { distances: [0, 0, 0], counts });
+  next.x = position.x;
+  next.y = position.y;
+  next.z = position.z;
+  next.time = now;
+  next.force = force;
+  next.revision = revision;
+  for (let i = 0; i < 3; i++) next.distances[i] = distances[i];
   return counts;
 }

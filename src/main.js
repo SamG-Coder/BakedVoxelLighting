@@ -929,6 +929,9 @@ async function loadAssets() {
   return assets;
 }
 const frameClock = new FrameClock();
+const walkingForward = new T.Vector3();
+const walkingRight = new T.Vector3();
+const treeLodDistances = [85, 190, 420];
 let frameTime = 0,
   animationId = null,
   loopStarted = false,
@@ -978,8 +981,8 @@ function animate(now) {
     camera.rotation.order = "YXZ";
     camera.rotation.set(pitch, yaw, 0);
     const speed = (keys.has("ShiftLeft") ? 22 : 6) * dt,
-      forward = new T.Vector3(-Math.sin(yaw), 0, -Math.cos(yaw)),
-      right = new T.Vector3(Math.cos(yaw), 0, -Math.sin(yaw));
+      forward = walkingForward.set(-Math.sin(yaw), 0, -Math.cos(yaw)),
+      right = walkingRight.set(Math.cos(yaw), 0, -Math.sin(yaw));
     if (keys.has("KeyW")) camera.position.addScaledVector(forward, speed);
     if (keys.has("KeyS")) camera.position.addScaledVector(forward, -speed);
     if (keys.has("KeyA")) camera.position.addScaledVector(right, -speed);
@@ -1027,12 +1030,11 @@ function animate(now) {
     document.body.classList.contains("exploring"),
     lamp,
   );
-  diagnostics.night = {
-    torch: torchActive,
-    moon: 1 - lightUniforms.daylight.value,
-    fire: nightWorld.fireStats,
-    roadTorches: nightWorld.roadStats,
-  };
+  const nightStats = (diagnostics.night ||= {});
+  nightStats.torch = torchActive;
+  nightStats.moon = 1 - lightUniforms.daylight.value;
+  nightStats.fire = nightWorld.fireStats;
+  nightStats.roadTorches = nightWorld.roadStats;
   lampOrb.visible = dynamic && !torchActive;
   if (!torchActive) lamp.intensity = dynamic ? 700 : 0;
   // Retain full per-frame six-face shadows whenever the lamp is emitting.
@@ -1072,7 +1074,7 @@ function animate(now) {
     clusters,
     camera,
     forcedTree,
-    [85, 190, 420],
+    treeLodDistances,
     scene,
   );
   diagnostics.grassLevels = updateLOD(
@@ -1091,7 +1093,7 @@ function animate(now) {
   diagnostics.grassBake = grassBakeStats;
   diagnostics.grassStreaming = grassStreamingStats;
   diagnostics.treeStreaming = treeStreamingStats;
-  diagnostics.preparation = {
+  diagnostics.preparation ||= {
     voxel: voxelWorkerStats,
     merged: mergedWorkerStats,
     renderer: rendererJobStats,
@@ -1195,7 +1197,8 @@ window.worldTest = {
 };
 // Capture controls are opt-in. Live showcase recording uses resume(); the manual
 // render entry point is used only to settle the starting view and by local tests.
-const showcaseRequested = new URLSearchParams(location.search).get("showcase") === "1";
+const showcaseRequested =
+  new URLSearchParams(location.search).get("showcase") === "1";
 if (import.meta.env.DEV || showcaseRequested)
   window.worldTest.capture = {
     resize(width, height) {
@@ -1279,19 +1282,19 @@ async function start() {
     group.userData.preparation = (async () => {
       group.updateMatrixWorld(true);
       group.userData.hasPreparedResources = true;
-      for (const mesh of group.children.length ? group.children : [group]) {
-        if (!Number.isFinite(priority())) return;
-        await prepareForRender(
-          renderer,
-          mesh,
-          camera,
-          scene,
-          composer.sceneTarget,
-          null,
-          1,
-          priority,
-        );
-      }
+      if (!Number.isFinite(priority())) return;
+      // Three yields between objects inside compileAsync. Capture the light list
+      // once per cluster, rather than traversing the entire world for every mesh.
+      await prepareForRender(
+        renderer,
+        group,
+        camera,
+        scene,
+        composer.sceneTarget,
+        null,
+        1,
+        priority,
+      );
       if (!Number.isFinite(priority())) return;
       await preparedSunShadow.prepare(renderer, group, scene, priority);
       if (!Number.isFinite(priority())) return;
@@ -1368,7 +1371,7 @@ async function start() {
   });
   for (const entry of shrubs)
     entry.group.traverse((o) => {
-      if (o.isInstancedMesh) {
+      if (o.isInstancedMesh || o.isAttributeInstances) {
         o.userData.voxelKind = "shrub";
         world.voxelMeshes.push(o);
       }

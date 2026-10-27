@@ -132,6 +132,33 @@ unblock();
 await Promise.all([gate, abandoned, offscreen, onscreen]);
 assert.deepEqual(calls, ["onscreen", "offscreen"]);
 assert.equal(queue.jobs.length, 0);
+// Backpressure spans preparation too: at most two constructed groups can wait
+// for GPU residency, with stale queued work skipped before allocation.
+{
+  const bounded = new PreparationQueue(2),
+    residencyGates = [];
+  let active = 0,
+    peak = 0,
+    abandon = false,
+    built = 0;
+  const tasks = Array.from({ length: 12 }, (_, i) =>
+    bounded.run(
+      async () => {
+        built++;
+        peak = Math.max(peak, ++active);
+        await new Promise((resolve) => residencyGates.push(resolve));
+        active--;
+      },
+      () => (abandon && i >= 2 ? Infinity : i),
+    ),
+  );
+  assert.equal(built, 2);
+  abandon = true;
+  residencyGates.splice(0).forEach((release) => release());
+  await Promise.all(tasks);
+  assert.equal(peak, 2);
+  assert.equal(built, 2);
+}
 const messages = [],
   worker = { postMessage: (message) => messages.push(message) };
 const client = new WorkerClient(worker, "test"),
@@ -173,7 +200,7 @@ assert.equal(reused, mesh);
 assert.equal(reused.instanceMatrix, matrixAttribute);
 assert.equal(reused.instanceColor, colourAttribute);
 assert.equal(made, 1);
-assert.equal(reused.count, 2);
+assert.equal(reused.instanceCount, 2);
 for (let i = 0; i < b.length; i++) {
   const t = b[i],
     expected = new Matrix4().compose(

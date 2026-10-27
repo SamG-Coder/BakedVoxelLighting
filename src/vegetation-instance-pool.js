@@ -1,10 +1,8 @@
-import {
-  InstancedMesh,
-  InstancedBufferAttribute,
-  Object3D,
-  Color,
-} from "three/webgpu";
+import { Object3D, Color } from "three/webgpu";
 import { disposeVegetationGroup } from "./vegetation-resources.js";
+import { AttributeInstances } from "./attribute-instances.js";
+const noRotation = [0, 0, 0];
+const unitScale = [1, 1, 1];
 
 // Geometry identifies a species/LOD. Keep mesh, material and attribute identities
 // when moving that representation between clusters, so its prepared shaders and
@@ -18,10 +16,11 @@ export class VegetationInstancePool {
     this.stats = { created: 0, reused: 0, retained: 0, disposed: 0 };
   }
   acquire(geometry, makeMaterial, transforms) {
-    const list = this.free.get(geometry) || [];
-    const index = list.findIndex(
-      (mesh) => mesh.instanceMatrix.count >= transforms.length,
-    );
+    const list = this.free.get(geometry);
+    const index =
+      list?.findIndex(
+        (mesh) => mesh.instanceMatrix.count >= transforms.length,
+      ) ?? -1;
     let mesh;
     if (index >= 0) {
       mesh = list.splice(index, 1)[0];
@@ -32,21 +31,17 @@ export class VegetationInstancePool {
         4,
         2 ** Math.ceil(Math.log2(transforms.length || 1)),
       );
-      mesh = new InstancedMesh(geometry, makeMaterial(), capacity);
-      mesh.instanceColor = new InstancedBufferAttribute(
-        new Float32Array(capacity * 3),
-        3,
-      );
+      mesh = new AttributeInstances(geometry, makeMaterial(), capacity, true);
       this.stats.created++;
     }
-    mesh.count = transforms.length;
+    mesh.instanceCount = transforms.length;
     mesh.visible = true;
     for (let i = 0; i < transforms.length; i++) {
       const t = transforms[i],
         dummy = this.transform;
       dummy.position.set(...t.p);
-      dummy.rotation.set(...(t.r || [0, 0, 0]));
-      dummy.scale.set(...(t.s || [1, 1, 1]));
+      dummy.rotation.set(...(t.r || noRotation));
+      dummy.scale.set(...(t.s || unitScale));
       dummy.updateMatrix();
       mesh.setMatrixAt(i, dummy.matrix);
       mesh.setColorAt(
@@ -58,21 +53,22 @@ export class VegetationInstancePool {
     }
     mesh.instanceMatrix.needsUpdate = mesh.instanceColor.needsUpdate = true;
     mesh.boundingBox = null;
-    mesh.boundingSphere = null;
     mesh.computeBoundingSphere();
     return mesh;
   }
   releaseGroup(group) {
     if (!group) return;
     group.removeFromParent();
-    for (const mesh of [...group.children]) {
+    while (group.children.length) {
+      const mesh = group.children[group.children.length - 1];
       group.remove(mesh);
-      if (!mesh.isInstancedMesh) {
+      if (!mesh.isInstancedMesh && !mesh.isAttributeInstances) {
         disposeVegetationGroup(mesh);
         continue;
       }
-      let list = this.free.get(mesh.geometry);
-      if (!list) this.free.set(mesh.geometry, (list = []));
+      const source = mesh.sourceGeometry || mesh.geometry;
+      let list = this.free.get(source);
+      if (!list) this.free.set(source, (list = []));
       mesh.visible = false;
       if (list.length < this.limit) {
         list.push(mesh);

@@ -3,6 +3,7 @@ import * as N from "three/tsl";
 import { readPixels } from "./tsl-baking.js";
 import { billboardTSL, grassAtlasUV } from "./tsl-materials.js";
 import * as T from "three/webgpu";
+import { AttributeInstances } from "./attribute-instances.js";
 import { decorate, fadeMaterial } from "./lighting.js";
 export async function captureSurface(
   renderer,
@@ -228,8 +229,13 @@ export function atlasMaterial(atlas, transmission = 0.32) {
 
   return material;
 }
-export function instanced(geometry, material, transforms) {
-  const mesh = new T.InstancedMesh(geometry, material, transforms.length),
+export function instanced(geometry, material, transforms, shared = true) {
+  const mesh = new AttributeInstances(
+      geometry,
+      material,
+      transforms.length,
+      shared,
+    ),
     dummy = new T.Object3D();
   transforms.forEach((t, i) => {
     dummy.position.set(...t.p);
@@ -248,6 +254,7 @@ export function surfaceBillboards(atlas, transforms, transmission = 0.32) {
     new T.PlaneGeometry(atlas.record.width, atlas.record.height),
     atlasMaterial(atlas, transmission),
     transforms,
+    false,
   );
   mesh.userData.ownedGeometry = true;
   return mesh;

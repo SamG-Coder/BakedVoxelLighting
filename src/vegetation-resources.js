@@ -5,11 +5,12 @@ export function disposeVegetationGroup(group) {
   group.removeFromParent();
   group.traverse((object) => {
     if (!object.isMesh) return;
-    if (object.isInstancedMesh) object.dispose();
+    if (object.isInstancedMesh || object.isAttributeInstances) object.dispose();
     for (const material of Array.isArray(object.material)
       ? object.material
       : [object.material])
       material.dispose();
-    if (object.userData.ownedGeometry) object.geometry.dispose();
+    if (object.userData.ownedGeometry && !object.isAttributeInstances)
+      object.geometry.dispose();
   });
 }

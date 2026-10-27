@@ -1,5 +1,8 @@
 import * as T from "three/webgpu";
 import * as N from "three/tsl";
+import { leaseGeometry } from "./shared-geometry.js";
+const boundsMatrix = new T.Matrix4();
+const transformedBounds = new T.Sphere();
 
 // Named geometry attributes let Three share a node-builder state between tiles.
 // InstancedMesh embeds each object's buffers in its graph and therefore keys that
@@ -18,12 +21,15 @@ function setupPosition(builder) {
 }
 
 export class AttributeInstances extends T.Mesh {
-  constructor(source, material, capacity) {
+  constructor(source, material, capacity, shared = false) {
     const geometry = new T.InstancedBufferGeometry();
     geometry.index = source.index;
     for (const [name, attribute] of Object.entries(source.attributes))
       geometry.setAttribute(name, attribute);
     super(geometry, material);
+    this.sourceGeometry = source;
+    this.sharedGeometry = shared;
+    if (shared) leaseGeometry(source, geometry);
     this.isAttributeInstances = true;
     const buffer = new T.InstancedInterleavedBuffer(
       new Float32Array(capacity * 16),
@@ -41,6 +47,39 @@ export class AttributeInstances extends T.Mesh {
     );
     geometry.instanceCount = capacity;
     this.boundingSphere = null;
+  }
+  // Do not expose Object3D.count: Three treats count > 1 as a per-object shader
+  // cache key. InstancedBufferGeometry already owns the draw instance count.
+  setMatrixAt(i, matrix) {
+    matrix.toArray(this.instanceMatrix.array, i * 16);
+  }
+  getMatrixAt(i, matrix) {
+    return matrix.fromArray(this.instanceMatrix.array, i * 16);
+  }
+  setColorAt(i, colour) {
+    colour.toArray(this.instanceColor.array, i * 3);
+  }
+  dispose() {
+    this.dispatchEvent({ type: "dispose" });
+    this.geometry.dispose();
+  }
+  clone(recursive = true) {
+    const mesh = new AttributeInstances(
+      this.sharedGeometry ? this.sourceGeometry : this.sourceGeometry.clone(),
+      this.material,
+      this.instanceMatrix.count,
+      this.sharedGeometry,
+    );
+    T.Object3D.prototype.copy.call(mesh, this, recursive);
+    mesh.instanceMatrix.array.set(this.instanceMatrix.array);
+    mesh.instanceColor.array.set(this.instanceColor.array);
+    // Per-instance species indices used by grass are private too.
+    for (const [name, a] of Object.entries(this.geometry.attributes))
+      if (a.isInstancedBufferAttribute && name !== "tileColour")
+        mesh.geometry.setAttribute(name, a.clone());
+    mesh.instanceCount = this.instanceCount;
+    mesh.boundingSphere = this.boundingSphere?.clone() ?? null;
+    return mesh;
   }
   set material(value) {
     // Also covers the temporary surface-capture material.
@@ -64,15 +103,16 @@ export class AttributeInstances extends T.Mesh {
     return this.geometry.instanceCount;
   }
   computeBoundingSphere() {
-    const base = new T.Sphere(),
-      matrix = new T.Matrix4(),
-      sphere = new T.Sphere();
     if (!this.geometry.boundingSphere) this.geometry.computeBoundingSphere();
-    base.copy(this.geometry.boundingSphere);
-    this.boundingSphere = new T.Sphere().makeEmpty();
+    this.boundingSphere ||= new T.Sphere();
+    this.boundingSphere.makeEmpty();
     for (let i = 0; i < this.instanceCount; i++) {
-      matrix.fromArray(this.instanceMatrix.array, i * 16);
-      this.boundingSphere.union(sphere.copy(base).applyMatrix4(matrix));
+      boundsMatrix.fromArray(this.instanceMatrix.array, i * 16);
+      this.boundingSphere.union(
+        transformedBounds
+          .copy(this.geometry.boundingSphere)
+          .applyMatrix4(boundsMatrix),
+      );
     }
   }
 }

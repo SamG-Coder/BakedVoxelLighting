@@ -37,7 +37,9 @@ import {
   atlasMaterial,
 } from "./impostors.js";
 const card = new T.PlaneGeometry(1, 1);
-const treeBuildQueue = new PreparationQueue();
+// Bound the entire build -> prepare -> publish lifetime, not just construction.
+// Otherwise CPU completions accumulate full tree groups behind the GPU queue.
+const treeBuildQueue = new PreparationQueue(2);
 export const treeStreamingStats = {
   pending: 0,
   completed: 0,
@@ -236,7 +238,8 @@ export async function buildTrees(world, assets, identity, progress = () => {}) {
       replacement.traverse((mesh) => {
         if (!mesh.isMesh) return;
         mesh.material = fadeMaterial(mesh.material.clone());
-        if (mesh.userData.ownedGeometry) mesh.geometry = mesh.geometry.clone();
+        if (mesh.userData.ownedGeometry && !mesh.isAttributeInstances)
+          mesh.geometry = mesh.geometry.clone();
       });
       replacement.userData.pipelineReady = false;
       replacement.userData.hasPreparedResources = false;
@@ -267,28 +270,24 @@ export async function buildTrees(world, assets, identity, progress = () => {}) {
       treeBuildQueue
         .run(async () => {
           const start = performance.now();
-          const group = await makeLevel(level, wanted);
+          let group = await makeLevel(level, wanted);
           const ms = performance.now() - start;
           treeStreamingStats.buildMs += ms;
           treeStreamingStats.maxBuildMs = Math.max(
             treeStreamingStats.maxBuildMs,
             ms,
           );
-          return group;
-        }, priority)
-        .then(async (group) => {
           if (!group) {
             treeStreamingStats.cancelled++;
             return;
           }
-          const start = performance.now();
+          const prepareStarted = performance.now();
           try {
             if (!wanted()) {
               treeStreamingStats.cancelled++;
               return;
             }
-            // CPU construction of the next cluster can proceed while this one
-            // waits in the shared, prioritized GPU preparation queue.
+            // One other cluster may build while this one waits for residency.
             await clusters.prepareGroup?.(group, priority);
             if (!wanted()) {
               treeStreamingStats.cancelled++;
@@ -298,7 +297,7 @@ export async function buildTrees(world, assets, identity, progress = () => {}) {
             group = null;
             treeStreamingStats.completed++;
           } finally {
-            const ms = performance.now() - start;
+            const ms = performance.now() - prepareStarted;
             treeStreamingStats.prepareMs += ms;
             treeStreamingStats.maxPrepareMs = Math.max(
               treeStreamingStats.maxPrepareMs,
@@ -306,7 +305,7 @@ export async function buildTrees(world, assets, identity, progress = () => {}) {
             );
             treePool.releaseGroup(group);
           }
-        })
+        }, priority)
         .catch(console.error)
         .finally(() => {
           if (pending.get(level) === generation) pending.delete(level);
@@ -928,7 +927,8 @@ export function updateShrubs(items, camera, scene) {
       replacement.traverse((mesh) => {
         if (!mesh.isMesh) return;
         mesh.material = fadeMaterial(mesh.material.clone());
-        if (mesh.userData.ownedGeometry) mesh.geometry = mesh.geometry.clone();
+        if (mesh.userData.ownedGeometry && !mesh.isAttributeInstances)
+          mesh.geometry = mesh.geometry.clone();
       });
       replacement.userData.pipelineReady =
         replacement.userData.hasPreparedResources = false;
