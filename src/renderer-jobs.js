@@ -122,12 +122,21 @@ export function prepareForRender(
         renderer.setRenderTarget(target);
         renderer.setMRT(target?.worldMRT || null);
         if (substituteMaterial) object.material = substituteMaterial;
-        // Three r186 compileAsync always asks for depth zero. The atmosphere's
-        // nested scene/shadow renders use depths one/two, and their context IDs
-        // are part of the shader cache key. Match that context during synchronous
-        // render-list capture, then restore before yielding. No dependency edits.
-        contexts.get = function (renderTarget, mrt, depth = callDepth) {
-          const context = getContext.call(this, renderTarget, mrt, depth);
+        // Retain the intended nested draw depth and r187 camera-type context.
+        // The wrapper exists only during synchronous render-list capture.
+        contexts.get = function (
+          renderTarget,
+          mrt,
+          depth = 0,
+          contextCamera = null,
+        ) {
+          const context = getContext.call(
+            this,
+            renderTarget,
+            mrt,
+            depth + callDepth,
+            contextCamera,
+          );
           context.renderTarget = renderTarget;
           return context;
         };
@@ -158,6 +167,10 @@ export function prepareForRender(
       try {
         await compiling;
       } finally {
+        // r187 also restores nested render state during async continuations.
+        // End this preparation transaction on the host's original target.
+        renderer.setRenderTarget(previous);
+        renderer.setMRT(previousMRT);
         // Pipeline readiness alone is not residency: compileAsync also discovers
         // shader-created instance attributes and texture bindings. Those copies
         // now enter the shared page queue instead of uploading in this call.

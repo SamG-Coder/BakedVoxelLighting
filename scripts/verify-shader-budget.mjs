@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
-import { patchAsyncBuilder } from "./patch-three-allocations.mjs";
+import {
+  patchAsyncBuilder,
+  patchCompileYield,
+} from "./patch-three-allocations.mjs";
 
 const source = (
   await readFile(
@@ -12,7 +15,7 @@ const source = (
   )
 ).replaceAll("\r\n", "\n");
 function fixture(source, hook) {
-  const start = source.indexOf("\tasync buildAsync() {"),
+  const start = source.indexOf("\tasync buildAsync("),
     end = source.indexOf("\n\t}\n", start) + 4;
   let clock = 0;
   const trace = [],
@@ -104,4 +107,57 @@ await pending;
 assert.equal(finished, true);
 console.log(
   "Async builder: identical stage order, CPU-only accounting, optional hook and awaited backpressure passed.",
+);
+
+// r187 must release compilation state before our host pause and restore it after.
+const rendererSource = patchCompileYield(
+  (
+    await readFile(
+      new URL(
+        "../node_modules/three/src/renderers/common/Renderer.js",
+        import.meta.url,
+      ),
+      "utf8",
+    )
+  ).replaceAll("\r\n", "\n"),
+);
+const begin = rendererSource.indexOf("const yieldPreCompile = async (");
+const end = rendererSource.indexOf("\n\t\t};", begin) + 5;
+let defaultYields = 0;
+const scheduler = {
+  needsYield: () => false,
+  yield: async () => {
+    defaultYields++;
+  },
+};
+const state = { target: "offscreen" };
+const renderer = {
+  _precompilationState: state,
+  _finishPreCompile() {
+    this._precompilationState = null;
+  },
+  _beginPreCompile(value) {
+    this._precompilationState = value;
+  },
+};
+const yieldCompile = new Function(
+  "scheduler",
+  rendererSource.slice(begin, end) + "; return yieldPreCompile;",
+).call(renderer, scheduler);
+let resume;
+const pause = new Promise((resolve) => {
+  resume = resolve;
+});
+const work = yieldCompile(pause);
+assert.equal(renderer._precompilationState, null);
+resume();
+await work;
+assert.equal(renderer._precompilationState, state);
+assert.equal(defaultYields, 0);
+scheduler.needsYield = () => true;
+await yieldCompile();
+assert.equal(renderer._precompilationState, state);
+assert.equal(defaultYields, 1);
+console.log(
+  "Compile yield: host pauses and native scheduler preserve renderer state.",
 );

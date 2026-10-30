@@ -30,7 +30,7 @@ try {
       characterData: true,
     });
   });
-  await page.goto("http://127.0.0.1:5173/?backend=" + backend);
+  await page.goto("http://127.0.0.1:5173/?backend=" + backend + "&aa=msaa");
   await page.waitForFunction(
     () =>
       (window.worldDiagnostics?.ready && !worldDiagnostics?.baking) ||
@@ -145,10 +145,20 @@ try {
   );
   await page.screenshot({ path: `evidence/tsl-${backend}.png` });
   const key = await page.evaluate(() => worldDiagnostics.volumeKey);
+  const keysBefore = await page.evaluate(
+    () =>
+      new Promise((resolve) => {
+        const request = worldTest.cache.db
+          .transaction("bakes")
+          .objectStore("bakes")
+          .getAllKeys();
+        request.onsuccess = () => resolve(request.result);
+      }),
+  );
   const other = backend === "webgpu" ? "webgl2" : "webgpu";
   await Promise.all([
-    page.waitForURL("**backend=" + other),
-    page.selectOption("#backend", other),
+    page.waitForURL((url) => url.searchParams.get("backend") === other),
+    page.selectOption("#backend", other, { force: true }),
   ]);
   await page.waitForFunction(
     () => window.worldDiagnostics?.ready && !worldDiagnostics.baking,
@@ -162,6 +172,21 @@ try {
     misses: worldTest.cache.misses,
     key: worldDiagnostics.volumeKey,
   }));
+  const keysAfter = await page.evaluate(
+    () =>
+      new Promise((resolve) => {
+        const request = worldTest.cache.db
+          .transaction("bakes")
+          .objectStore("bakes")
+          .getAllKeys();
+        request.onsuccess = () => resolve(request.result);
+      }),
+  );
+  console.log(
+    "CACHE SWITCH",
+    warm,
+    keysAfter.filter((key) => !keysBefore.includes(key)),
+  );
   assert.equal(warm.backend, other);
   assert.equal(warm.key, key);
   assert.equal(warm.misses, 0);
@@ -173,8 +198,8 @@ try {
     JSON.stringify(warm, null, 2),
   );
   for (let level = 0; level < 4; level++) {
-    await page.selectOption("#treeLod", String(level));
-    await page.selectOption("#grassLod", String(level));
+    await page.selectOption("#treeLod", String(level), { force: true });
+    await page.selectOption("#grassLod", String(level), { force: true });
     await page.waitForTimeout(700);
     const levels = await page.evaluate(() => ({
       tree: worldDiagnostics.treeLevels,

@@ -63,15 +63,16 @@ export function patchTRAA(source) {
     "renderer.copyTextureToTexture( currentDepth, this._historyRenderTarget.depthTexture );",
     "renderer.copyTextureToTexture( currentDepth, this._historyDepthTexture );",
   );
+  // r187 binds the depth texture once in the constructor and inherits its format.
   source = replace(
     source,
-    "this._previousDepthNode.value = this._historyRenderTarget.depthTexture;",
-    "this._previousDepthNode.value = this._historyDepthTexture;",
+    "this._historyRenderTarget.depthTexture.format = this.depthNode.value.format;",
+    "this._historyDepthTexture.format = this.depthNode.value.format;",
   );
   source = replace(
     source,
-    "this._historyRenderTarget.depthTexture.type = FloatType;",
-    "this._historyDepthTexture.type = FloatType;",
+    "this._historyRenderTarget.depthTexture.type = this.depthNode.value.type;",
+    "this._historyDepthTexture.type = this.depthNode.value.type;",
   );
   source = replace(
     source,

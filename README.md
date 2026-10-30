@@ -288,11 +288,11 @@ Missing area data is now prepared off the animation thread:
   on first encounter. The colour and shadow paths are prepared before publishing
   new tree LODs. An isolated cutout/wind comparison matches the original shadow
   image byte-for-byte on both APIs.
-- Three r186.1's async compilation uses a depth-zero render context, while this
-  app's nested world and shadow passes use depths one and two. The preparation
-  wrapper captures the matching context synchronously and immediately restores
-  renderer state before awaiting compilation. No files in node_modules are
-  patched. Recheck this compatibility wrapper when upgrading Three.
+- Preparation retains the world/shadow pass depth and camera type while capturing
+  its render list. Three r187 restores compilation state around shader-stage yields;
+  the version-pinned postinstall patch routes our frame-budget pauses through that
+  boundary. Preparation restores its original target at completion, and the final
+  atmosphere composite explicitly selects the canvas. Revalidate on each upgrade.
 - Turning in place reuses distance-LOD decisions (with a 1 mm movement tolerance
   for floating-point drift). Frustum culling and drawing continue every frame.
   Completed jobs invalidate those decisions. Released grass generations reject
@@ -395,7 +395,7 @@ These are **transfer pages**, not sparse virtual textures or a GPU heap allocato
 The complete destination buffer/texture is still allocated. Native image uploads
 during initial baking, render-target allocation, shader construction/compilation,
 uniform updates and GPU rendering remain outside the transfer budget. The existing
-grass residency policy still controls eviction. Three is pinned to **0.186.1**;
+grass residency policy still controls eviction. Three is pinned to **0.187.0**;
 the adapter uses backend internals and must be revalidated before upgrading.
 
 Diagnostics: `worldDiagnostics.preparation.uploads` reports pending and in-flight
@@ -483,3 +483,16 @@ paged through the copy target. This fixes missing terrain, trees and sky on
 backends that reject indexed draws from untyped copied buffers. The upload check
 also verifies rendered coverage and GL errors; buffer byte equality alone did
 not catch this failure.
+
+## Three.js r187 and disabled cutting
+
+The main app currently disables wood cutting completely: it does not import the
+cutting module, load the axe assets, construct the fracture worker, or register
+chop input. Walking collision, torch controls and grass/water interaction remain
+available. Cutting source is retained for future work.
+
+The r187 migration and feature assessment are recorded in
+[the upgrade review](docs/three-r187-review.md). The upstream binding-key fix
+replaces our old local binding patch. Version-pinned uniform storage, compilation
+budget and temporal-history patches remain reproducible through `postinstall`.
+MSAA remains the default; the upgrade does not enable additional rendering passes.

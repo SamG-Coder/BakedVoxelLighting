@@ -1,5 +1,4 @@
 import { WalkCollision } from "./walk-collision.js";
-import { TreeCutting } from "./tree-cutting.js";
 import { updateWalkEffects, walkEffectStats } from "./walk-effects.js";
 import { sampleHydrology } from "./watershed.js";
 import { installGameMenu } from "./game-menu.js";
@@ -17,7 +16,6 @@ import { sunShadowFilter } from "./sun-shadow-filter.js";
 import { getGPUUploads } from "./gpu-uploads.js";
 import {
   prepareForRender,
-  installCompilationContext,
   rendererJobStats,
   setPreparationPresenting,
 } from "./renderer-jobs.js";
@@ -189,7 +187,6 @@ const renderer = new T.WebGPURenderer({
   powerPreference: "high-performance",
 });
 await renderer.init();
-installCompilationContext(renderer);
 const gpuUploads = getGPUUploads(renderer);
 diagnostics.preparation = {
   uploads: gpuUploads.stats,
@@ -500,7 +497,6 @@ function cacheLabel() {
 }
 const keys = new Set();
 let walkCollision;
-let treeCutting;
 let treeLightingDirty = false;
 const walkWater = {};
 diagnostics.walkInteraction = walkEffectStats;
@@ -571,12 +567,6 @@ document.addEventListener("pointerlockchange", () => {
     gameMenu.show();
 });
 renderer.domElement.addEventListener("pointerdown", (e) => {
-  if (
-    walking &&
-    document.pointerLockElement === renderer.domElement &&
-    e.button === 0
-  )
-    void treeCutting?.strike();
   if (!fallbackMouse || !walking || e.button !== 0) return;
   fallbackDrag = e.pointerId;
   renderer.domElement.setPointerCapture(e.pointerId);
@@ -615,10 +605,6 @@ window.addEventListener("keydown", (e) => {
   if (e.target.matches("input,select,button") || $("settingsDialog").open)
     return;
   if (!cameraModeActive) return;
-  if (walking && e.code === "KeyF" && !e.repeat) {
-    e.preventDefault();
-    void treeCutting?.strike();
-  }
   if (e.code === "KeyM" && !e.repeat) void ambience.toggle();
   if (e.code === "KeyT" && !e.repeat) {
     $("torch").checked = !$("torch").checked;
@@ -1206,7 +1192,6 @@ function animate(now) {
     wet,
     walkWater.level || 0,
   );
-  treeCutting?.update(dt, walking, now / 1000);
   sky.position.copy(camera.position);
   ambience.update(now, worldHour);
   sky.updateMatrixWorld();
@@ -1602,21 +1587,9 @@ async function start() {
       scene.add(c.levels[0]);
   });
   diagnostics.areaIndexes = indexVoxelWorld(world);
-  treeCutting = new TreeCutting({
-    scene,
-    camera,
-    world,
-    clusters,
-    collision: walkCollision,
-    onChanged: () => {
-      world.treeEditRevision = (world.treeEditRevision || 0) + 1;
-      treeLightingDirty = true;
-      lightDirty = true;
-    },
-  });
-  diagnostics.treeCutting = treeCutting.stats;
-  window.worldTest.treeCutting = treeCutting;
-  await treeCutting.ready;
+  // Cutting is parked: do not load its axe assets, fracture worker or frame work.
+  diagnostics.treeCutting = { enabled: false };
+  window.worldTest.treeCutting = null;
   world.bakeIdentity = await digest(
     assetHash +
       surfaceIdentity +

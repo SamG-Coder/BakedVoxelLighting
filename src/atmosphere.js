@@ -183,6 +183,10 @@ export function createAtmosphere(
         lastFov !== camera.fov)
     )
       resolve.resetHistory();
+    // Presentation owns the canvas, even after an asynchronous offscreen bake.
+    // Never composite a scene texture back into its own render attachment.
+    renderer.setRenderTarget(null);
+    renderer.setMRT(null);
     pipeline.render();
     lastEye.copy(camera.position);
     lastRotation.copy(camera.quaternion);

@@ -5,43 +5,19 @@ import { patchTRAA } from "./patch-three-temporal.mjs";
 
 // Reproducible, version-pinned changes to the runtime bundle used by both
 // WebGPU and forceWebGL. No shader equations, bindings or update rates change.
-const marker = "// BakedVoxelLighting allocation patch v1";
-const yieldMarker = "// BakedVoxelLighting asynchronous build budget v1";
+const marker = "// BakedVoxelLighting allocation patch v2";
+const yieldMarker = "// BakedVoxelLighting asynchronous build budget v2";
 function replaceOnce(source, before, after) {
   if (source.split(before).length !== 2)
     throw new Error(`Three allocation patch mismatch: ${before.slice(0, 90)}`);
   return source.replace(before, after);
 }
-export function patchBindings(source) {
-  source = replaceOnce(
-    source,
-    "\t\tlet cacheKey = '';",
-    `\t\tlet cacheKey = '';
-\t\tconst groupData = this.get( bindGroup );
-\t\tconst keyIds = groupData.allocationKeyIds || ( groupData.allocationKeyIds = new Array( bindGroup.bindings.length ) );
-\t\tlet keyCount = 0;`,
-  );
-  source = replaceOnce(
-    source,
-    "cacheKey += attribute.id + ',';",
-    "keyIds[ keyCount ++ ] = attribute.id;",
-  );
-  source = replaceOnce(
-    source,
-    "cacheKey += texture.id + ',';",
-    "keyIds[ keyCount ++ ] = texture.id;",
-  );
-  source = replaceOnce(
-    source,
-    "\t\tif ( needsBindingsUpdate === true ) {",
-    `\t\tif ( needsBindingsUpdate === true ) {
-
-\t\t\t// A cache key is consumed only when bindings actually change.
-\t\t\tif ( cacheBindings ) for ( let i = 0; i < keyCount; i ++ ) cacheKey += keyIds[ i ] + ',';`,
-  );
-  return source;
-}
 export function patchUniforms(source) {
+  source = replaceOnce(
+    source,
+    "clone._addedIndices = new Set();",
+    "clone._addedIndices = [];",
+  );
   source = replaceOnce(
     source,
     "this._addedIndices = new Set();",
@@ -82,11 +58,16 @@ export function patchUniforms(source) {
 export function patchAsyncBuilder(source) {
   // Only the async method changes. Keep synchronous builds and shader content
   // identical; allow the host to account CPU work on both sides of every await.
-  const start = source.indexOf("\tasync buildAsync() {");
+  const start = source.indexOf("\tasync buildAsync( yieldFn = yieldToMain ) {");
   const end = source.indexOf("\n\t}\n", start) + 4;
   if (start < 0 || end < start)
     throw new Error("Missing NodeBuilder.buildAsync");
   let method = source.slice(start, end);
+  method = replaceOnce(
+    method,
+    "yieldFn = yieldToMain",
+    "yieldFn = ( pause ) => pause || yieldToMain()",
+  );
   method = replaceOnce(
     method,
     "\t\tthis.prebuild();",
@@ -96,18 +77,38 @@ export function patchAsyncBuilder(source) {
   );
   method = replaceOnce(
     method,
-    "\t\t\t\tawait yieldToMain();",
-    `\t\t\t\tawait ( budgetYield?.( performance.now() - started ) || yieldToMain() );
+    "\t\t\t\tawait yieldFn();",
+    `\t\t\t\tawait yieldFn( budgetYield?.( performance.now() - started ) || null );
 \t\t\t\tif ( budgetYield ) started = performance.now();`,
   );
   method = replaceOnce(
     method,
     "\t\treturn this;",
     `\t\tconst pause = budgetYield?.( performance.now() - started );
-\t\tif ( pause ) await pause;
+\t\tif ( pause ) await yieldFn( pause );
 \t\treturn this;`,
   );
   return source.slice(0, start) + method + source.slice(end);
+}
+export function patchCompileYield(source) {
+  // r187 temporarily restores render state while awaiting compilation. The host
+  // frame-budget pause must pass through that same save/restore boundary.
+  source = replaceOnce(
+    source,
+    "const yieldPreCompile = async () => {",
+    "const yieldPreCompile = async ( budgetPause = null ) => {",
+  );
+  source = replaceOnce(
+    source,
+    "if ( scheduler.needsYield() === false ) return;",
+    "if ( budgetPause === null && scheduler.needsYield() === false ) return;",
+  );
+  source = replaceOnce(
+    source,
+    "await scheduler.yield();\n\n\t\t\tthis._beginPreCompile( activePrecompilationState );",
+    "await ( budgetPause || scheduler.yield() );\n\n\t\t\tthis._beginPreCompile( activePrecompilationState );",
+  );
+  return source;
 }
 export function patchRuntime(source) {
   source = source.replaceAll("\r\n", "\n");
@@ -121,12 +122,12 @@ export function patchRuntime(source) {
       source.slice(end);
   };
   if (!source.includes(marker)) {
-    section("class Bindings extends DataMap {", patchBindings);
+    // r187 now avoids unchanged binding-key allocations upstream.
     section("class UniformsGroup extends UniformBuffer {", patchUniforms);
     source = `${marker}\n${source}`;
   }
   if (!source.includes(yieldMarker)) {
-    source = patchAsyncBuilder(source);
+    source = patchCompileYield(patchAsyncBuilder(source));
     source = `${yieldMarker}\n${source}`;
   }
   return source;
@@ -134,7 +135,7 @@ export function patchRuntime(source) {
 async function main() {
   const root = new URL("../node_modules/three/", import.meta.url);
   const pkg = JSON.parse(await readFile(new URL("package.json", root), "utf8"));
-  if (pkg.version !== "0.186.1")
+  if (pkg.version !== "0.187.0")
     throw new Error(`Revalidate allocation patches for Three ${pkg.version}`);
   const path = new URL("build/three.webgpu.js", root);
   const source = await readFile(path, "utf8");
@@ -146,7 +147,7 @@ async function main() {
   if (temporalResult !== temporalSource)
     await writeFile(temporalPath, temporalResult);
   console.log(
-    "Three 0.186.1: allocation, shader budget and native temporal history patches installed.",
+    "Three 0.187.0: allocation, shader budget and native temporal history patches installed.",
   );
 }
 if (

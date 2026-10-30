@@ -18,13 +18,13 @@ export function setUploadsInteractive(value) {
   for (const manager of live) manager.queue.interactive = value;
 }
 
-// These small adapters deliberately target the installed Three 0.186.1 backend.
+// These small adapters deliberately target the installed Three 0.187.0 backend.
 // Preserve Three's handles, binding generations, samplers and disposal paths;
 // only substitute the INITIAL payload copies while preparing hidden objects.
 // Uniform updates and rendering are never intercepted as asynchronous work.
 class PagedUploads {
   constructor(renderer) {
-    if (REVISION !== "186")
+    if (REVISION !== "187")
       throw new Error("Revalidate paged uploads against this Three revision");
     this.renderer = renderer;
     this.backend = renderer.backend;
@@ -43,7 +43,7 @@ class PagedUploads {
   get capturing() {
     return (
       this.explicit > 0 ||
-      (this.batch !== null && this.renderer._isPreCompiling)
+      (this.batch !== null && this.renderer._precompilationState !== null)
     );
   }
 

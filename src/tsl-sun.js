@@ -68,6 +68,6 @@ export function installVoxelSun(renderer, uniforms) {
       return direct;
     }
   }
-  renderer.library.addLight(VoxelSunNode, VoxelSun);
-  renderer.library.addLight(VoxelMoonNode, VoxelMoon);
+  VoxelSun.registerNode(VoxelSunNode);
+  VoxelMoon.registerNode(VoxelMoonNode);
 }

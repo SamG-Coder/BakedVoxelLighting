@@ -4,11 +4,7 @@ import { readFile } from "node:fs/promises";
 import DataMap from "three/src/renderers/common/DataMap.js";
 import OriginalBindings from "three/src/renderers/common/Bindings.js";
 import OriginalUniforms from "three/src/renderers/common/UniformsGroup.js";
-import {
-  patchBindings,
-  patchUniforms,
-  patchRuntime,
-} from "./patch-three-allocations.mjs";
+import { patchUniforms, patchRuntime } from "./patch-three-allocations.mjs";
 
 async function patched(name, transform) {
   const url = new URL(
@@ -28,7 +24,7 @@ async function patched(name, transform) {
     )
   ).default;
 }
-const Bindings = await patched("Bindings", patchBindings);
+const Bindings = OriginalBindings; // r187 supplies the binding allocation fix upstream.
 const Uniforms = await patched("UniformsGroup", patchUniforms);
 
 function bindingFixture(Type) {
@@ -63,7 +59,7 @@ function bindingFixture(Type) {
     textures = { get: () => textureData };
   backend.updateBindings = (group, groups, key, version) =>
     trace.push([key, version]);
-  textures.updateTexture = () => {};
+  textures.updateTexture = () => textureData.generation;
   textures.updateSampler = () => sampler.key;
   const manager = new Type(
     backend,
@@ -91,27 +87,17 @@ function bindingFixture(Type) {
 }
 
 test("unchanged draw bindings build no temporary cache strings after warmup", () => {
-  const original = bindingFixture(OriginalBindings),
-    optimized = bindingFixture(Bindings);
+  const optimized = bindingFixture(Bindings);
   optimized.update();
-  const storage = optimized.manager.get(optimized.group).allocationKeyIds;
   for (let frame = 0; frame < 10000; frame++) {
-    original.update();
     optimized.update();
   }
-  assert.equal(original.conversions(), 10000);
   assert.equal(optimized.conversions(), 0);
-  assert.equal(
-    optimized.manager.get(optimized.group).allocationKeyIds,
-    storage,
-  );
-  assert.deepEqual(optimized.trace, original.trace);
 });
 
 test("texture generation, sampler changes, skipped groups and external textures retain binding keys", () => {
-  const original = bindingFixture(OriginalBindings),
-    optimized = bindingFixture(Bindings);
-  for (const f of [original, optimized]) {
+  const optimized = bindingFixture(Bindings);
+  for (const f of [optimized]) {
     f.binding.changed = true;
     f.textureData.generation++;
     f.update();
@@ -131,10 +117,9 @@ test("texture generation, sampler changes, skipped groups and external textures 
     f.sampler.key = 5;
     f.update();
   }
-  assert.deepEqual(optimized.trace, original.trace);
   assert.deepEqual(optimized.trace, [
-    ["42,", 1],
-    ["42,", 1],
+    ["42", 1],
+    ["42", 1],
     ["", 0],
     ["", 0],
     ["", 0],
@@ -142,10 +127,10 @@ test("texture generation, sampler changes, skipped groups and external textures 
 });
 
 test("storage attribute replacement preserves mixed-resource key order", () => {
-  const original = bindingFixture(OriginalBindings),
-    optimized = bindingFixture(Bindings);
-  for (const f of [original, optimized]) {
+  const optimized = bindingFixture(Bindings);
+  for (const f of [optimized]) {
     f.manager.attributes.update = () => {};
+    f.manager.attributes.get = () => ({ generation: 0 });
     const storage = { isStorageBuffer: true, attribute: { id: 9 } };
     f.group.bindings.unshift(storage);
     f.update();
@@ -156,11 +141,10 @@ test("storage attribute replacement preserves mixed-resource key order", () => {
     f.sampler.key = 2;
     f.update();
   }
-  assert.deepEqual(optimized.trace, original.trace);
   assert.deepEqual(optimized.trace, [
-    ["9,42,", 1],
-    ["10,42,", 1],
-    ["10,", 0],
+    ["9,42", 1],
+    ["10,42", 1],
+    ["10", 0],
   ]);
 });
 
@@ -220,6 +204,8 @@ test("installed runtime patch is idempotent", async () => {
     "utf8",
   );
   assert.equal(patchRuntime(source), source);
-  assert.ok(source.includes("// BakedVoxelLighting allocation patch v1"));
-  assert.ok(source.includes("// BakedVoxelLighting asynchronous build budget v1"));
+  assert.ok(source.includes("// BakedVoxelLighting allocation patch v2"));
+  assert.ok(
+    source.includes("// BakedVoxelLighting asynchronous build budget v2"),
+  );
 });
