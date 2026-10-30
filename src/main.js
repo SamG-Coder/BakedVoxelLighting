@@ -1,3 +1,9 @@
+import {
+  compressOpaqueTextures,
+  COMPRESSION_REVISION,
+} from "./texture-compression.js";
+import { prepareTerrainSurfaces } from "./terrain-surfaces.js";
+import { decodeTexture, closeTextureDecoders } from "./texture-pixels.js";
 import { WalkCollision } from "./walk-collision.js";
 import { updateWalkEffects, walkEffectStats } from "./walk-effects.js";
 import { sampleHydrology } from "./watershed.js";
@@ -67,6 +73,8 @@ import nativeSource from "./native-kernels.js?raw";
 import { VoxelSun, installVoxelSun } from "./tsl-sun.js";
 import tslBakeSource from "./tsl-baking.js?raw";
 import tslMaterialSource from "./tsl-materials.js?raw";
+import foliageLightingSource from "./foliage-lighting.js?raw";
+import terrainSurfacesSource from "./terrain-surfaces-worker.js?raw";
 import treeGridSource from "./voxel-tree-grid.js?raw";
 import detailSource from "./voxel-core.js?raw";
 import voxelWorkerSource from "./voxel-worker.js?raw";
@@ -816,34 +824,42 @@ const assetNames = [
 ];
 async function loadAssets() {
   const assets = {},
-    hashes = [],
-    loader = new T.TextureLoader();
-  // Fetch/decode concurrently; GPU normal and atlas passes remain serialized.
-  const downloads = new Map(
-    assetNames.map((name) => {
-      const url = `${import.meta.env.BASE_URL}textures/${name}.png`;
-      return [
-        name,
-        (async () => {
-          const response = await fetch(url);
-          if (!response.ok) throw Error(`Missing ${name}`);
-          const blob = await response.blob();
-          const hash = await digest(await blob.arrayBuffer());
-          const objectURL = URL.createObjectURL(blob);
-          try {
-            return { hash, map: await loader.loadAsync(objectURL) };
-          } finally {
-            URL.revokeObjectURL(objectURL);
-          }
-        })(),
-      ];
-    }),
-  );
-  // Attach rejection handlers immediately while consuming in stable asset order.
-  for (const job of downloads.values()) job.catch(() => {});
-  for (const name of assetNames) {
+    hashes = [];
+  // Bounded lookahead: two fetch/decode jobs rather than retaining all decoded
+  // source images while normal/mip baking consumes them one by one.
+  const downloads = new Map();
+  const launch = (index) => {
+    if (index >= assetNames.length) return;
+    const name = assetNames[index];
+    const job = (async () => {
+      const response = await fetch(
+        `${import.meta.env.BASE_URL}textures/${name}.png`,
+      );
+      if (!response.ok) throw Error(`Missing ${name}`);
+      const blob = await response.blob();
+      const hash = await digest(await blob.arrayBuffer());
+      const pixels = await decodeTexture(blob);
+      const map = new T.DataTexture(
+        pixels.data,
+        pixels.w,
+        pixels.h,
+        T.RGBAFormat,
+      );
+      map.minFilter = map.magFilter = T.LinearFilter;
+      map.needsUpdate = true;
+      return { hash, map, pixels };
+    })();
+    job.catch(() => {});
+    downloads.set(name, job);
+  };
+  launch(0);
+  launch(1);
+  for (let index = 0; index < assetNames.length; index++) {
+    const name = assetNames[index];
     progress(`Loading ${name} surface`, 0.01);
     const downloaded = await downloads.get(name);
+    downloads.delete(name);
+    launch(index + 2);
     const hash = downloaded.hash;
     hashes.push(hash);
     let map = downloaded.map;
@@ -896,11 +912,7 @@ async function loadAssets() {
     normal.magFilter = T.LinearFilter;
     normal.generateMipmaps = true;
     normal.needsUpdate = true;
-    const sampleCanvas = document.createElement("canvas");
-    sampleCanvas.width = sampleCanvas.height = 64;
-    const ctx = sampleCanvas.getContext("2d", { willReadFrequently: true });
-    ctx.drawImage(map.image, 0, 0, 64, 64);
-    const pixels = ctx.getImageData(0, 0, 64, 64).data;
+    const pixels = downloaded.pixels.sample;
     let coverage = 0,
       r = 0,
       g = 0,
@@ -928,25 +940,10 @@ async function loadAssets() {
       "source-mips-material-v3:" + (await digest(hash + atlasWorkerSource));
     let mipRecord = await cache.get(mipKey);
     if (!mipRecord) {
-      sampleCanvas.width = map.image.width;
-      sampleCanvas.height = map.image.height;
-      ctx.drawImage(map.image, 0, 0);
-      const raw = ctx.getImageData(
-        0,
-        0,
-        sampleCanvas.width,
-        sampleCanvas.height,
-      ).data;
-      const data = new Uint8Array(raw.length),
-        stride = sampleCanvas.width * 4;
-      for (let y = 0; y < sampleCanvas.height; y++)
-        data.set(
-          raw.subarray(y * stride, (y + 1) * stride),
-          (sampleCanvas.height - 1 - y) * stride,
-        );
+      const data = downloaded.pixels.data;
       mipRecord = await prepareAtlasMips({
-        w: sampleCanvas.width,
-        h: sampleCanvas.height,
+        w: map.image.width,
+        h: map.image.height,
         views: 1,
         data,
         normals: record.data,
@@ -1000,6 +997,7 @@ async function loadAssets() {
       T.SRGBColorSpace,
     );
     assets[name] = {
+      hash,
       map,
       normal,
       profile: { coverage: coverage / 4096, colour: colour.toArray() },
@@ -1012,8 +1010,23 @@ async function loadAssets() {
       hash,
     };
   }
+  assets.terrainSurfaces = await prepareTerrainSurfaces(assets, renderer);
+  closeTextureDecoders();
+  diagnostics.textureCompression = await compressOpaqueTextures(
+    assets,
+    renderer,
+    cache,
+    (message) => progress(message, 0.08),
+  );
   assetHash = await digest(
-    woodUnionSource +
+    COMPRESSION_REVISION +
+      JSON.stringify(
+        diagnostics.textureCompression.textures.map((t) => [
+          t.name,
+          !!t.rejected,
+        ]),
+      ) +
+      woodUnionSource +
       appearanceSource +
       catalogSource +
       habitatSource +
@@ -1023,6 +1036,8 @@ async function loadAssets() {
       nativeVolumeSource +
       tslBakeSource +
       tslMaterialSource +
+      foliageLightingSource +
+      terrainSurfacesSource +
       hashes.join("") +
       lightingSource +
       worldSource +
@@ -1414,7 +1429,7 @@ if (import.meta.env.DEV || showcaseRequested)
   };
 async function start() {
   await cache.open();
-  const assets = await loadAssets();
+  const assets = await loadAssets().finally(closeTextureDecoders);
   progress("Baking whole-world directional horizons", 0.012);
   diagnostics.worldLight = await prepareWorldLight(
     renderer,

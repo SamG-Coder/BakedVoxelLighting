@@ -115,6 +115,7 @@ try {
       dynamicDelta: delta,
       coverage,
       frame: worldDiagnostics.frameTiming,
+      textureCompression: worldDiagnostics.textureCompression,
     };
   });
   console.log("MEASURES", JSON.stringify(measures));

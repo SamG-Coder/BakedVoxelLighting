@@ -1,3 +1,4 @@
+import { FoliageMaterial } from "./foliage-lighting.js";
 import { grassContactOffset } from "./walk-effects.js";
 import { GRASS_MIXES } from "./plant-catalog.js";
 import { worldHabitat, worldSunVisibility } from "./world-light.js";
@@ -14,26 +15,12 @@ import {
   variedSurface,
   atlasSurfaceCoordinates,
 } from "./surface-variation.js";
-const matrices = new WeakMap();
+// Resolve the current draw's buffer without creating a buffer-specific graph or
+// an extra interleaved GPU allocation/update callback for every instance set.
+const sharedInstanceMatrix = N.referenceAttribute("instanceMatrix", "mat4");
 const instanceMatrix = N.Fn((builder) => {
   if (builder.object.isAttributeInstances) return attributeInstanceMatrix();
-  const source = builder.object.instanceMatrix;
-  if (!source) return N.mat4(1);
-  let node = matrices.get(source);
-  if (!node) {
-    const buffer = new T.InstancedInterleavedBuffer(source.array, 16, 1);
-    // Pooled tiles keep the same arrays but replace their contents.
-    N.OnBeforeFrameUpdate(() => {
-      buffer.version = source.version;
-    });
-    node = N.mat4(
-      ...[0, 4, 8, 12].map((offset) =>
-        N.instancedBufferAttribute(buffer, "vec4", 16, offset),
-      ),
-    );
-    matrices.set(source, node);
-  }
-  return node;
+  return builder.object.instanceMatrix ? sharedInstanceMatrix : N.mat4(1);
 });
 const yawNode = () =>
   N.varying(
@@ -210,7 +197,7 @@ function createDecorated(original, options, U, grid) {
     roots = false,
     surfacePayload = false,
   } = options;
-  const m = new T.MeshStandardNodeMaterial();
+  const m = new FoliageMaterial();
   // Copy standard properties without copying GLSL hooks or changing NodeMaterial's type.
   for (const key of [
     "color",
@@ -298,7 +285,10 @@ function createDecorated(original, options, U, grid) {
       land = terrainNode(U.terrainField.value, p.xz, grid),
       guv = p.xz.mul(0.72);
     const coordinates = surfaceCoordinates(guv, p.xz);
-    const soil = variedSurface(N.texture(m.map), coordinates).rgb,
+    const terrainColors = N.texture(U.terrainColorArray.value);
+    const terrainNormals = N.texture(U.terrainNormalArray.value);
+    const soilSample = variedSurface(terrainColors.depth(0), coordinates);
+    const soil = soilSample.rgb,
       lush = variedSurface(
         texRef(U, "grassSurface"),
         atlasSurfaceCoordinates(coordinates, 0, GRASS_MIXES.length, 512),
@@ -315,10 +305,29 @@ function createDecorated(original, options, U, grid) {
         .add(0.5)
         .div(grid),
     );
-    const stone = variedSurface(
-      texRef(U, "rockMap"),
-      surfaceCoordinates(guv.mul(0.5), p.xz),
-    ).rgb;
+    const stoneCoordinates = surfaceCoordinates(guv.mul(0.5), p.xz);
+    const stoneSample = variedSurface(terrainColors.depth(1), stoneCoordinates);
+    const stone = stoneSample.rgb;
+    const micro = N.float(1).sub(
+      N.smoothstep(40, 160, N.distance(N.cameraPosition, p)),
+    );
+    const wearBase = N.max(
+      N.smoothstep(0.08, 0.72, land.g),
+      N.smoothstep(0.08, 0.65, groundInfluence.r).mul(0.92),
+    );
+    const rockBase = N.smoothstep(0.32, 0.72, land.a);
+    // Keep pure regions unchanged, break up only their transition. Fade the
+    // micro-height correction with the detail, preserving the distant cover.
+    const rockWeight = rockBase
+      .add(
+        stoneSample.a
+          .sub(soilSample.a)
+          .mul(rockBase.mul(N.float(1).sub(rockBase)))
+          .mul(micro)
+          .mul(1.2),
+      )
+      .clamp();
+    const normalWeight = rockWeight.mul(N.float(1).sub(wearBase));
     const cover = texRef(U, "grassGround").sample(p.xz.add(2000).div(4000));
     const habitat = texRef(U, "grassHabitat").sample(p.xz.add(2000).div(4000));
     const patchCoordinates = surfaceCoordinates(
@@ -362,6 +371,9 @@ function createDecorated(original, options, U, grid) {
       lush,
       dry,
       stone,
+      rockWeight,
+      soilHeight: soilSample.a,
+      micro,
       root: groundInfluence.r,
       bank: groundInfluence.ba,
       cover,
@@ -371,7 +383,11 @@ function createDecorated(original, options, U, grid) {
       woodland: habitat.a,
     });
     m.normalNode = N.normalMap(
-      variedSurface(N.texture(m.normalMap), coordinates),
+      N.mix(
+        variedSurface(terrainNormals.depth(0), coordinates),
+        variedSurface(terrainNormals.depth(1), stoneCoordinates),
+        normalWeight,
+      ),
       N.vec2(m.normalScale.x, m.normalScale.y),
     );
     const canopy = normal.normalize();
@@ -384,7 +400,7 @@ function createDecorated(original, options, U, grid) {
     base = m.colorNode;
     // Damp river sediment and compacted paths reflect differently from litter.
     m.roughnessNode = N.mix(
-      0.96,
+      N.mix(0.96, 0.88, normalWeight),
       0.67,
       groundInfluence.b.mul(N.float(1).sub(groundInfluence.a)),
     );
@@ -442,29 +458,15 @@ function createDecorated(original, options, U, grid) {
     m.roughnessNode = N.mix(0.94, grass ? 0.8 : 0.68, response);
     if (!grass) m.aoNode = N.mix(0.86, 1, response);
   }
-  const extra = K.foliageRadiance({
-    n: N.normalWorld,
-    indirect,
-    bent,
-    enabled: ref(U, "bakedEnabled"),
-    sun: ref(U, "liveSunDirection", "vec3"),
-    visibility: bake(N.positionWorld).a.mul(
-      N.float(1).sub(
-        cloudAt(U, N.positionWorld, ref(U, "liveSunDirection", "vec3")).mul(
-          CLOUD_SHADOW_STRENGTH,
-        ),
-      ),
-    ),
-    lamp: ref(U, "liveLampPosition", "vec3").sub(N.positionWorld),
-    power: ref(U, "liveLampPower"),
-    lampColour: ref(U, "liveLampColour", "vec3"),
-    thin: ground
-      ? groundFade.mul(0.48).mul(groundResponse)
-      : N.float(thin * 1.65).mul(response),
-    daylight: ref(U, "daylight"),
-    sunColour: ref(U, "sunColour", "vec3"),
-  });
-  m.emissiveNode = N.diffuseColor.rgb.mul(extra);
+  // Indirect irradiance remains baked. Transmission belongs to each shadowed
+  // direct light, including the moon and carried torch, not the emissive path.
+  m.foliageTransmissionNode = ground
+    ? groundFade.mul(0.2).mul(groundResponse)
+    : N.float(thin).mul(response);
+  m.emissiveNode = N.diffuseColor.rgb
+    .mul(indirect)
+    .mul(ref(U, "bakedEnabled"))
+    .mul(N.float(0.7).add(N.max(N.dot(N.normalWorld, bent), 0).mul(0.3)));
   return fade ? fadeTSL(m) : m;
 }
 let mossEnvironmentUniforms;
@@ -589,6 +591,9 @@ export function billboardTSL(m, atlas, merged = false) {
   // Standard materialColor samples map at its ordinary UV. Explicitly bind both
   // albedo and emissive sampling to the selected atlas frame.
   m.emissiveNode = m.emissiveNode.context({ getUV: () => atlasUV });
+  m.foliageTransmissionNode = m.foliageTransmissionNode?.context({
+    getUV: () => atlasUV,
+  });
   m.roughnessNode = m.roughnessNode?.context({ getUV: () => atlasUV });
   m.aoNode = m.aoNode?.context({ getUV: () => atlasUV });
   m.userData.surfaceMask = true;

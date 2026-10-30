@@ -130,6 +130,8 @@ export function updateTerrain(camera) {
   }
 }
 export function buildEnvironment(scene, assets) {
+  lightUniforms.terrainColorArray.value = assets.terrainSurfaces.color;
+  lightUniforms.terrainNormalArray.value = assets.terrainSurfaces.normal;
   lightUniforms.groundMap.value = assets["ground-meadow"].map;
   lightUniforms.rockMap.value = assets.scree.map;
   lightUniforms.dryGroundMap.value = assets["meadow-ground"].map;

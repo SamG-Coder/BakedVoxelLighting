@@ -80,6 +80,8 @@ export const lightUniforms = {
   directionAtlas: { value: fallback.clone() },
   dryGroundMap: { value: null },
   rockMap: { value: null },
+  terrainColorArray: { value: null },
+  terrainNormalArray: { value: null },
 };
 export function fadeMaterial(material) {
   return fadeTSL(material);

@@ -1,5 +1,6 @@
 import {
   REVISION,
+  RGBA_BPTC_Format,
   RGBAFormat,
   RGFormat,
   RedFormat,
@@ -353,8 +354,18 @@ class PagedUploads {
   }
 
   canPageTexture(t) {
+    if (
+      t.isCompressedTexture &&
+      t.format === RGBA_BPTC_Format &&
+      !t.isCompressedArrayTexture &&
+      !t.isCompressedCubeTexture &&
+      !t.flipY &&
+      t.mipmaps.length &&
+      Math.ceil(t.mipmaps[0].width / 4) * 16 <= UPLOAD_LIMITS.pageBytes
+    )
+      return true;
     return (
-      (t.isDataTexture || t.isData3DTexture) &&
+      (t.isDataTexture || t.isData3DTexture || t.isDataArrayTexture) &&
       !t.flipY &&
       !t.premultiplyAlpha &&
       [RGBAFormat, RGFormat, RedFormat].includes(t.format) &&
@@ -364,6 +375,7 @@ class PagedUploads {
   }
 
   createTexturePages(texture) {
+    if (texture.isCompressedTexture) return this.createCompressedPages(texture);
     const levels = texture.mipmaps.length ? texture.mipmaps : [texture.image];
     const channels =
       texture.format === RGBAFormat ? 4 : texture.format === RGFormat ? 2 : 1;
@@ -387,10 +399,85 @@ class PagedUploads {
       while (w > 1 || h > 1) {
         w = Math.max(1, w >> 1);
         h = Math.max(1, h >> 1);
-        allocated += w * h * bpt;
+        allocated += w * h * bpt * (texture.image.depth || 1);
       }
     }
     this.track(handle, entry.job, allocated);
+  }
+
+  createCompressedPages(texture) {
+    const bytes = texture.mipmaps.reduce((n, l) => n + l.data.byteLength, 0);
+    const data = this.backend.get(texture);
+    data.version = texture.version;
+    const entry = {
+      generate: null,
+      job: this.queue.enqueue(
+        this.compressedPages(texture),
+        bytes,
+        texture.name,
+      ),
+    };
+    this.textures.set(texture, entry);
+    this.track(data.texture || data.textureGPU, entry.job, bytes);
+  }
+
+  *compressedPages(texture) {
+    const backend = this.backend,
+      gpu = backend.isWebGPUBackend,
+      gl = backend.gl;
+    for (let mip = 0; mip < texture.mipmaps.length; mip++) {
+      const level = texture.mipmaps[mip];
+      const blocksWide = Math.ceil(level.width / 4),
+        blocksHigh = Math.ceil(level.height / 4);
+      const stride = blocksWide * 16;
+      const rows = Math.max(1, Math.floor(UPLOAD_LIMITS.pageBytes / stride));
+      for (let row = 0; row < blocksHigh; row += rows) {
+        const count = Math.min(rows, blocksHigh - row),
+          bytes = count * stride;
+        yield {
+          bytes,
+          submit: () => {
+            const resource = backend.get(texture);
+            const view = new Uint8Array(
+              level.data.buffer,
+              level.data.byteOffset + row * stride,
+              bytes,
+            );
+            if (gpu)
+              backend.device.queue.writeTexture(
+                {
+                  texture: resource.texture,
+                  mipLevel: mip,
+                  origin: [0, row * 4, 0],
+                },
+                view,
+                { bytesPerRow: stride, rowsPerImage: count },
+                {
+                  width: blocksWide * 4,
+                  height: count * 4,
+                  depthOrArrayLayers: 1,
+                },
+              );
+            else {
+              backend.state.bindTexture(
+                resource.glTextureType,
+                resource.textureGPU,
+              );
+              gl.compressedTexSubImage2D(
+                resource.glTextureType,
+                mip,
+                0,
+                row * 4,
+                level.width,
+                Math.min(count * 4, level.height - row * 4),
+                resource.glInternalFormat,
+                view,
+              );
+            }
+          },
+        };
+      }
+    }
   }
 
   *texturePages(texture, levels, bpt, entry) {
@@ -456,7 +543,7 @@ class PagedUploads {
                     data.byteOffset + offset,
                     bytes / data.BYTES_PER_ELEMENT,
                   );
-                  if (texture.isData3DTexture)
+                  if (texture.isData3DTexture || texture.isDataArrayTexture)
                     gl.texSubImage3D(
                       glTextureType,
                       mip,
