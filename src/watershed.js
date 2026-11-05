@@ -2,7 +2,46 @@ import { fbm, noise } from "./terrain-noise.js";
 
 // A regional solve surrounds the playable square. Every consumer (including
 // workers) uses this deterministic, compact graph, never a per-frame simulation.
-export const WATERSHED_VERSION = "catchments-1";
+export const WATERSHED_VERSION = "catchments-coast-3";
+// Mean sea level. The southern coast is shaped here, so every consumer
+// (terrain, rivers, habitats, workers) sees one shoreline.
+export const SEA_LEVEL = 0;
+// Shoreline position (z) for a given x: broad bays plus smaller coves.
+export function coastLine(x) {
+  return (
+    -1180 +
+    (noise(x * 0.0011 + 12.3, 7.1) - 0.5) * 560 +
+    (noise(x * 0.0043 - 3.7, 19.4) - 0.5) * 150
+  );
+}
+const smoothstep = (a, b, x) => {
+  const t = Math.max(0, Math.min(1, (x - a) / (b - a)));
+  return t * t * (3 - 2 * t);
+};
+// Reshape inland relief into a beach/cliff coast and a shelving seabed.
+function coastal(x, z, inlandHeight) {
+  const d = z - coastLine(x);
+  // Headlands keep steep cliffs; bays grade into long sandy beaches.
+  const cliff = smoothstep(0.42, 0.68, noise(x * 0.0026 + 41, 3.3));
+  const reach = 520 - cliff * 380;
+  if (d >= 0) {
+    // Beach face and berm rising gently from the waterline.
+    const beach = SEA_LEVEL + d * (0.035 + cliff * 0.07);
+    const t = smoothstep(0, reach, d);
+    return beach + (Math.max(inlandHeight, beach) - beach) * t;
+  }
+  // Dean's equilibrium beach profile h = A x^(2/3) (A ~ 0.1 m^(1/3) for fine
+  // sand): a smooth, slowly deepening nearshore. Steeper below headlands.
+  // The shelf then deepens offshore; seabed relief only well out to sea.
+  const offshore = -d;
+  const dean = 0.1 * Math.pow(offshore, 2 / 3) * (1 + cliff * 1.8);
+  const shelf = Math.max(0, offshore - 500) ** 2 * 0.00005;
+  const relief =
+    (fbm(x * 0.006 + 9, z * 0.006 - 4) - 0.5) *
+    3 *
+    smoothstep(220, 700, offshore);
+  return Math.max(-95, SEA_LEVEL - dean - shelf + relief);
+}
 const N = 257,
   EXTENT = 5120,
   HALF = EXTENT / 2,
@@ -31,6 +70,7 @@ for (let z = 0; z < N; z++)
         150 *
         Math.min(1, lateral / 380) +
       (fbm(wx * 0.005 + 4, wz * 0.005 - 17) - 0.5) * 32;
+    elevation[z * N + x] = coastal(wx, wz, elevation[z * N + x]);
   }
 function push(i) {
   let p = heapSize++;
@@ -106,7 +146,7 @@ for (let pass = 0; pass < 5; pass++) {
   for (let k = COUNT - 1; k >= 0; k--) {
     const i = order[k],
       p = parent[i];
-    if (p < 0) continue;
+    if (p < 0 || elevation[i] < SEA_LEVEL) continue;
     const drop = elevation[i] - elevation[p];
     elevation[i] -= Math.min(
       drop * 0.35,
@@ -124,7 +164,8 @@ const px = new Float32Array(COUNT),
 for (let i = 0; i < COUNT; i++) {
   px[i] = (i % N) * STEP - HALF;
   pz[i] = Math.floor(i / N) * STEP - HALF;
-  channel[i] = area[i] >= 180000 ? 1 : 0;
+  // Rivers end at the shore; the seabed carries no channel water.
+  channel[i] = area[i] >= 180000 && elevation[i] > SEA_LEVEL - 0.3 ? 1 : 0;
   const p = parent[i];
   if (p >= 0 && (majorChild[p] < 0 || area[i] > area[majorChild[p]]))
     majorChild[p] = i;

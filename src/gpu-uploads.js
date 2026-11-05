@@ -161,46 +161,9 @@ class PagedUploads {
             manager.stats.unpagedBufferBytes += base.array.byteLength;
             return original.call(this, attribute, usage);
           }
-          if (backend.isWebGPUBackend) {
-            if (!manager.createGPUBuffer(attribute, usage)) {
-              manager.stats.unpagedBufferBytes += base.array.byteLength;
-              return original.call(this, attribute, usage);
-            }
-          } else {
-            // Let Three populate GL format, integer and interleaved metadata. Its
-            // allocator takes a byte count here, rather than a whole typed array.
-            const create = this._createBuffer;
-            this._createBuffer = (gl, type, array, hint) => {
-              const buffer = manager.allocation(() => {
-                const b = gl.createBuffer();
-                // Establish an element buffer before filling it through the copy
-                // target. Otherwise indexed draws can fail WebGL validation even
-                // though the copied bytes read back correctly. Detach the cached
-                // VAO first so allocation cannot replace its element binding.
-                const target =
-                  type === gl.ELEMENT_ARRAY_BUFFER
-                    ? gl.ELEMENT_ARRAY_BUFFER
-                    : gl.COPY_WRITE_BUFFER;
-                if (target === gl.ELEMENT_ARRAY_BUFFER)
-                  backend.state.resetVertexState();
-                gl.bindBuffer(target, b);
-                gl.bufferData(target, array.byteLength, hint);
-                gl.bindBuffer(target, null);
-                return b;
-              });
-              const job = manager.queue.enqueue(
-                manager.bufferPages(buffer, array),
-                array.byteLength,
-                "geometry buffer",
-              );
-              manager.track(buffer, job, array.byteLength);
-              return buffer;
-            };
-            try {
-              original.call(this, attribute, usage);
-            } finally {
-              this._createBuffer = create;
-            }
+          if (!manager.createGPUBuffer(attribute, usage)) {
+            manager.stats.unpagedBufferBytes += base.array.byteLength;
+            return original.call(this, attribute, usage);
           }
         },
     );
@@ -260,7 +223,7 @@ class PagedUploads {
       (original) =>
         function (texture) {
           const data = backend.get(texture);
-          manager.release(data.texture || data.textureGPU);
+          manager.release(data.texture);
           manager.textures.delete(texture);
           return original.call(this, texture);
         },
@@ -315,8 +278,7 @@ class PagedUploads {
   }
 
   *bufferPages(buffer, array, source = array, index = false) {
-    const gpu = this.backend.isWebGPUBackend,
-      gl = this.backend.gl;
+    const device = this.backend.device;
     for (
       let offset = 0;
       offset < array.byteLength;
@@ -342,12 +304,7 @@ class PagedUploads {
             array.byteOffset + offset,
             bytes,
           );
-          if (gpu) this.backend.device.queue.writeBuffer(buffer, offset, view);
-          else {
-            gl.bindBuffer(gl.COPY_WRITE_BUFFER, buffer);
-            gl.bufferSubData(gl.COPY_WRITE_BUFFER, offset, view);
-            gl.bindBuffer(gl.COPY_WRITE_BUFFER, null);
-          }
+          device.queue.writeBuffer(buffer, offset, view);
         },
       };
     }
@@ -382,7 +339,7 @@ class PagedUploads {
     const bpt = channels * texture.image.data.BYTES_PER_ELEMENT;
     const bytes = levels.reduce((sum, level) => sum + level.data.byteLength, 0);
     const data = this.backend.get(texture),
-      handle = data.texture || data.textureGPU;
+      handle = data.texture;
     data.version = texture.version;
     const entry = { generate: null, job: null };
     entry.job = this.queue.enqueue(
@@ -418,13 +375,11 @@ class PagedUploads {
       ),
     };
     this.textures.set(texture, entry);
-    this.track(data.texture || data.textureGPU, entry.job, bytes);
+    this.track(data.texture, entry.job, bytes);
   }
 
   *compressedPages(texture) {
-    const backend = this.backend,
-      gpu = backend.isWebGPUBackend,
-      gl = backend.gl;
+    const backend = this.backend;
     for (let mip = 0; mip < texture.mipmaps.length; mip++) {
       const level = texture.mipmaps[mip];
       const blocksWide = Math.ceil(level.width / 4),
@@ -443,37 +398,20 @@ class PagedUploads {
               level.data.byteOffset + row * stride,
               bytes,
             );
-            if (gpu)
-              backend.device.queue.writeTexture(
-                {
-                  texture: resource.texture,
-                  mipLevel: mip,
-                  origin: [0, row * 4, 0],
-                },
-                view,
-                { bytesPerRow: stride, rowsPerImage: count },
-                {
-                  width: blocksWide * 4,
-                  height: count * 4,
-                  depthOrArrayLayers: 1,
-                },
-              );
-            else {
-              backend.state.bindTexture(
-                resource.glTextureType,
-                resource.textureGPU,
-              );
-              gl.compressedTexSubImage2D(
-                resource.glTextureType,
-                mip,
-                0,
-                row * 4,
-                level.width,
-                Math.min(count * 4, level.height - row * 4),
-                resource.glInternalFormat,
-                view,
-              );
-            }
+            backend.device.queue.writeTexture(
+              {
+                texture: resource.texture,
+                mipLevel: mip,
+                origin: [0, row * 4, 0],
+              },
+              view,
+              { bytesPerRow: stride, rowsPerImage: count },
+              {
+                width: blocksWide * 4,
+                height: count * 4,
+                depthOrArrayLayers: 1,
+              },
+            );
           },
         };
       }
@@ -481,9 +419,7 @@ class PagedUploads {
   }
 
   *texturePages(texture, levels, bpt, entry) {
-    const backend = this.backend,
-      gpu = backend.isWebGPUBackend,
-      gl = backend.gl;
+    const backend = this.backend;
     for (let mip = 0; mip < levels.length; mip++) {
       const { width, height, data } = levels[mip],
         depth = levels[mip].depth || 1;
@@ -508,68 +444,16 @@ class PagedUploads {
               bytes,
               submit: () => {
                 const resource = backend.get(texture);
-                if (gpu) {
-                  backend.device.queue.writeTexture(
-                    {
-                      texture: resource.texture,
-                      mipLevel: mip,
-                      origin: [x, y, z],
-                    },
-                    new Uint8Array(
-                      data.buffer,
-                      data.byteOffset + offset,
-                      bytes,
-                    ),
-                    { bytesPerRow: w * bpt, rowsPerImage: h },
-                    { width: w, height: h, depthOrArrayLayers: 1 },
-                  );
-                } else {
-                  const { textureGPU, glTextureType, glFormat, glType } =
-                    resource;
-                  backend.state.bindTexture(glTextureType, textureGPU);
-                  backend.state.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
-                  backend.state.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
-                  backend.state.pixelStorei(
-                    gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL,
-                    false,
-                  );
-                  backend.state.pixelStorei(gl.UNPACK_ROW_LENGTH, 0);
-                  backend.state.pixelStorei(gl.UNPACK_IMAGE_HEIGHT, 0);
-                  backend.state.pixelStorei(gl.UNPACK_SKIP_PIXELS, 0);
-                  backend.state.pixelStorei(gl.UNPACK_SKIP_ROWS, 0);
-                  backend.state.pixelStorei(gl.UNPACK_SKIP_IMAGES, 0);
-                  const view = new data.constructor(
-                    data.buffer,
-                    data.byteOffset + offset,
-                    bytes / data.BYTES_PER_ELEMENT,
-                  );
-                  if (texture.isData3DTexture || texture.isDataArrayTexture)
-                    gl.texSubImage3D(
-                      glTextureType,
-                      mip,
-                      x,
-                      y,
-                      z,
-                      w,
-                      h,
-                      1,
-                      glFormat,
-                      glType,
-                      view,
-                    );
-                  else
-                    gl.texSubImage2D(
-                      glTextureType,
-                      mip,
-                      x,
-                      y,
-                      w,
-                      h,
-                      glFormat,
-                      glType,
-                      view,
-                    );
-                }
+                backend.device.queue.writeTexture(
+                  {
+                    texture: resource.texture,
+                    mipLevel: mip,
+                    origin: [x, y, z],
+                  },
+                  new Uint8Array(data.buffer, data.byteOffset + offset, bytes),
+                  { bytesPerRow: w * bpt, rowsPerImage: h },
+                  { width: w, height: h, depthOrArrayLayers: 1 },
+                );
               },
             };
           }

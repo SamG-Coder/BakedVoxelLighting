@@ -3,6 +3,7 @@ import * as T from "three/webgpu";
 import * as N from "three/tsl";
 import { sampleVolume } from "./tsl-materials.js";
 import { ref } from "./tsl-baking.js";
+import { skyColour } from "./native-kernels.js";
 import { taau } from "three/addons/tsl/display/TAAUNode.js";
 import { traa } from "three/addons/tsl/display/TRAANode.js";
 import { sss } from "three/addons/tsl/display/SSSNode.js";
@@ -134,10 +135,28 @@ export function createAtmosphere(
   // Coverage alpha belongs to the foliage raster pass, not canvas opacity.
   // The world includes an opaque sky; retaining cutout alpha here leaks the
   // page background through dense mipmapped grass after temporal filtering.
-  const composed = N.vec4(
-    shaded.mul(N.exp(light.a.negate())).add(light.rgb),
-    1,
-  );
+  // Aerial perspective: distant land and sea fade into the horizon sky. The
+  // local volumetric light above only spans 160 m around the camera.
+  const haze = N.Fn(() => {
+    const view = N.getViewPosition(N.screenUV, depth, inverseProjection);
+    const ray = worldMatrix.mul(N.vec4(view, 0)).xyz.normalize();
+    const distance = view.length();
+    const geometry = N.float(1).sub(N.step(0.999999, depth));
+    const amount = N.float(1)
+      .sub(N.exp(N.max(distance.sub(220), 0).div(-6200)))
+      .mul(N.exp(N.max(ray.y, 0).mul(-3.2)))
+      .mul(geometry)
+      .mul(0.88);
+    const horizon = skyColour({
+      ray: N.vec3(ray.x, N.max(ray.y, 0.015), ray.z).normalize(),
+      sun: ref(U, "liveSunDirection", "vec3").normalize(),
+      cloud: N.vec4(0),
+      daylight: ref(U, "daylight"),
+    });
+    return N.vec4(horizon, amount);
+  })();
+  const scattered = shaded.mul(N.exp(light.a.negate())).add(light.rgb);
+  const composed = N.vec4(N.mix(scattered, haze.rgb, haze.a), 1);
   let output = composed;
   if (aaMode === "taau") {
     const input = N.rtt(composed, null, null, {

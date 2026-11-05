@@ -1,3 +1,4 @@
+import { SEA_LEVEL } from "./watershed.js";
 import { seededRandom } from "./habitat.js";
 // Shared source records drive visible LODs and voxel occlusion independently.
 export function deadwoodSegments(log, sample) {
@@ -18,7 +19,12 @@ export function deadwoodSegments(log, sample) {
       x = a[0] + (b[0] - a[0]) * t,
       z = a[2] + (b[2] - a[2]) * t,
       land = sample(x, z);
-    if (land.traffic > 0.14 || land.riverDistance < 10) return [];
+    if (
+      land.traffic > 0.14 ||
+      land.riverDistance < 10 ||
+      land.height < SEA_LEVEL + 1.5
+    )
+      return [];
     lift = Math.max(
       lift,
       land.height + radius * 0.65 - (a[1] + (b[1] - a[1]) * t),

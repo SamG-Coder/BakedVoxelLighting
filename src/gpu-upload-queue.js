@@ -268,33 +268,13 @@ export class GPUUploadQueue {
       }
       this.kick();
     };
-    if (this.backend.isWebGPUBackend) {
-      this.backend.device.queue
-        .onSubmittedWorkDone()
-        .then(() => complete(), complete);
-    } else {
-      const gl = this.backend.gl;
-      const sync = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0);
-      gl.flush();
-      this.fences.push({ sync, complete });
-    }
+    this.backend.device.queue
+      .onSubmittedWorkDone()
+      .then(() => complete(), complete);
   }
 
-  pollFences() {
-    if (!this.fences.length) return;
-    const gl = this.backend.gl;
-    this.fences = this.fences.filter(({ sync, complete }) => {
-      const status = gl.clientWaitSync(sync, gl.SYNC_FLUSH_COMMANDS_BIT, 0); // zero timeout; never gl.finish()
-      if (status === gl.TIMEOUT_EXPIRED) return true;
-      gl.deleteSync(sync);
-      complete(
-        status === gl.WAIT_FAILED
-          ? new Error("GPU upload fence failed")
-          : undefined,
-      );
-      return false;
-    });
-  }
+  // WebGPU completion is promise-driven; there are no fences to poll.
+  pollFences() {}
 
   dispose() {
     this.disposed = true;
@@ -304,10 +284,6 @@ export class GPUUploadQueue {
     document.removeEventListener("visibilitychange", this.visibility);
     for (const job of this.pending) this.cancel(job);
     this.jobs.length = 0;
-    for (const { sync, complete } of this.fences) {
-      this.backend.gl.deleteSync(sync);
-      complete();
-    }
     this.fences.length = 0;
   }
 }

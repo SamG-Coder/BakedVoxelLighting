@@ -1,7 +1,17 @@
 import { fbm, noise } from "./terrain-noise.js";
-import { sampleHydrology, regionalHeight, riverSegments } from "./watershed.js";
+import {
+  sampleHydrology,
+  regionalHeight,
+  riverSegments,
+  SEA_LEVEL,
+} from "./watershed.js";
 export { fbm, noise } from "./terrain-noise.js";
-export { sampleHydrology, regionalHeight } from "./watershed.js";
+export {
+  sampleHydrology,
+  regionalHeight,
+  SEA_LEVEL,
+  coastLine,
+} from "./watershed.js";
 export const TERRAIN_SIZE = 4000;
 const water = {};
 // Compatibility for named river viewpoints only. Physical consumers use the
@@ -44,7 +54,12 @@ export function landscape(x, z) {
   return {
     // Worker terrain grids interpolate this channel: Infinity * 0 would become
     // NaN on cell edges and suppress all upland grass away from indexed rivers.
-    riverDistance: Math.min(10000, water.distance) - water.width + 8,
+    // The sea shore shares the river exclusion: beaches and the seabed carry no
+    // trees, grass or deadwood. ~14 m of distance per metre above sea level.
+    riverDistance: Math.min(
+      Math.min(10000, water.distance) - water.width + 8,
+      (elevation - SEA_LEVEL - 0.9) * 14,
+    ),
     clump: 0.58 + 0.42 * noise(x * 0.013 + 3, z * 0.013 - 6),
     forest,
     upland: Math.min(1, elevation / 470),

@@ -4,10 +4,14 @@ import * as N from "three/tsl";
 // per square tile this has no grid seams. Keep derivatives from the unwrapped UV
 // so minification never mistakes an offset/atlas seam for a huge footprint.
 export function surfaceCoordinates(uv, world) {
-  const phase = N.sin(world.x.mul(0.19).add(N.sin(world.y.mul(0.13)).mul(2.1)))
-    .add(N.sin(world.y.mul(0.23).sub(world.x.mul(0.07))))
-    .mul(2.7)
-    .add(12)
+  // Variant index from aperiodic gradient noise at two scales (Quilez's
+  // "texture repetition" technique). The previous sum of sines was itself
+  // periodic, so the same offset arrangement recurred every few tens of
+  // metres and the ground visibly tiled.
+  const phase = N.mx_noise_float(N.vec3(world.mul(0.052), 3.7))
+    .mul(5.5)
+    .add(N.mx_noise_float(N.vec3(world.mul(0.0131), 11.3)).mul(9))
+    .add(32)
     .toVar();
   const index = N.floor(phase);
   const offset = (i) =>

@@ -87,7 +87,6 @@ export function updateWalkEffects(active, x, feetY, z, time, wet, waterLevel) {
 }
 
 const ripple = nativeFunction(
-  `vec3 footRipple(vec3 p,vec4 contact,float time){float t=time-contact.w;if(t<0.||t>2.4||abs(p.y-contact.y)>.65)return vec3(0.);vec2 d=p.xz-contact.xz;float r=length(d);if(r>4.)return vec3(0.);float q=r-t*1.35;float env=.012*exp(-q*q*7.)*(1.-smoothstep(.2,2.4,t))*smoothstep(0.,.07,t);float phase=q*14.;float h=sin(phase)*env;float slope=(14.*cos(phase)-14.*q*sin(phase))*env;return vec3(d.x/max(r,.08)*slope,h,d.y/max(r,.08)*slope);}`,
   `fn footRipple(p:vec3f,contact:vec4f,time:f32)->vec3f{let t=time-contact.w;if(t<0.||t>2.4||abs(p.y-contact.y)>.65){return vec3f(0.);}let d=p.xz-contact.xz;let r=length(d);if(r>4.){return vec3f(0.);}let q=r-t*1.35;let env=.012*exp(-q*q*7.)*(1.-smoothstep(.2,2.4,t))*smoothstep(0.,.07,t);let phase=q*14.;let h=sin(phase)*env;let slope=(14.*cos(phase)-14.*q*sin(phase))*env;return vec3f(d.x/max(r,.08)*slope,h,d.y/max(r,.08)*slope);}`,
 );
 

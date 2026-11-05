@@ -3,9 +3,7 @@ import { WorkerClient } from "./worker-client.js";
 import { uploadTextures } from "./gpu-uploads.js";
 export const COMPRESSION_REVISION = "basis-073eb6a-uastc2-bc7-v1";
 export function supportsBC7(renderer) {
-  return renderer.backend.isWebGPUBackend
-    ? renderer.backend.device.features.has("texture-compression-bc")
-    : !!renderer.backend.gl.getExtension("EXT_texture_compression_bptc");
+  return renderer.backend.device.features.has("texture-compression-bc");
 }
 export async function compressOpaqueTextures(
   assets,
@@ -20,45 +18,75 @@ export async function compressOpaqueTextures(
     textures: [],
   };
   if (!stats.supported) return stats;
-  let client;
+  const names = [
+    "bark",
+    "bark-birch",
+    "bark-ash",
+    "rock",
+    "meadow-ground",
+    "ground-meadow",
+    "woodland-litter",
+  ];
+  // Cold caches previously encoded one texture at a time (~7 s each). Run a
+  // small worker pool; results still upload and publish in a fixed order.
+  const workers = [];
+  const poolSize = Math.max(
+    1,
+    Math.min(names.length, (navigator.hardwareConcurrency || 4) - 2, 4),
+  );
+  let free = [];
+  const waiting = [];
+  const acquire = async () => {
+    if (free.length) return free.pop();
+    if (workers.length < poolSize) {
+      const client = new WorkerClient(
+        new Worker(`${import.meta.env.BASE_URL}workers/texture-compress.js`),
+        "texture compression",
+      );
+      workers.push(client);
+      return client;
+    }
+    return new Promise((resolve) => waiting.push(resolve));
+  };
+  const release = (client) => {
+    const next = waiting.shift();
+    if (next) next(client);
+    else free.push(client);
+  };
+  const encode = async (name) => {
+    const asset = assets[name],
+      source = asset.map;
+    const key = COMPRESSION_REVISION + ":" + asset.hash;
+    let record = await cache.get(key);
+    if (record) return record;
+    const client = await acquire();
+    try {
+      // The original stays usable until upload succeeds. Only a private copy
+      // crosses the worker boundary.
+      const data = source.image.data.slice();
+      record = await client.run(
+        "compress",
+        { data, width: source.image.width, height: source.image.height },
+        [data.buffer],
+      );
+      await cache.put(key, record);
+      return record;
+    } catch (error) {
+      // Compression is optional. Do not persist a transient worker/network
+      // failure as a rejected asset or prevent the world from loading.
+      return { rejected: "encoder unavailable", error: String(error) };
+    } finally {
+      release(client);
+    }
+  };
   try {
-    for (const name of [
-      "bark",
-      "bark-birch",
-      "bark-ash",
-      "rock",
-      "meadow-ground",
-      "ground-meadow",
-      "woodland-litter",
-    ]) {
-      const asset = assets[name],
+    const records = names.map((name) => encode(name));
+    for (let i = 0; i < names.length; i++) {
+      const name = names[i],
+        asset = assets[name],
         source = asset.map;
-      const key = COMPRESSION_REVISION + ":" + asset.hash;
       progress?.(`Compressing ${name} surface`);
-      let record = await cache.get(key);
-      if (!record) {
-        try {
-          client ||= new WorkerClient(
-            new Worker(
-              `${import.meta.env.BASE_URL}workers/texture-compress.js`,
-            ),
-            "texture compression",
-          );
-          // The original stays usable until upload succeeds. Only a private copy
-          // crosses the worker boundary; one texture is encoded at a time.
-          const data = source.image.data.slice();
-          record = await client.run(
-            "compress",
-            { data, width: source.image.width, height: source.image.height },
-            [data.buffer],
-          );
-          await cache.put(key, record);
-        } catch (error) {
-          // Compression is optional. Do not persist a transient worker/network
-          // failure as a rejected asset or prevent the world from loading.
-          record = { rejected: "encoder unavailable", error: String(error) };
-        }
-      }
+      const record = await records[i];
       const sourceBytes = source.mipmaps.reduce(
         (n, l) => n + l.data.byteLength,
         0,
@@ -106,7 +134,7 @@ export async function compressOpaqueTextures(
       stats.textures.push({ name, rmse: record.rmse, bytes });
     }
   } finally {
-    client?.worker.terminate();
+    for (const client of workers) client.worker.terminate();
   }
   return stats;
 }

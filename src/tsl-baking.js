@@ -14,18 +14,16 @@ export function fullscreen(fragment, uniforms = {}) {
 }
 export async function readPixels(renderer, target, x, y, w, h, destination) {
   const pixels = await renderer.readRenderTargetPixelsAsync(target, x, y, w, h);
-  // WebGPU rows start at top; WebGL rows start at bottom. Cached atlases use bottom-up rows.
-  if (renderer.backend.isWebGPUBackend) {
-    const stride = w * 4;
-    // Three r186 returns the raw WebGPU buffer, including 256-byte row padding.
-    const sourceStride =
-      pixels.length === w * h * 4 ? stride : Math.ceil(stride / 256) * 256;
-    for (let row = 0; row < h; row++)
-      destination.set(
-        pixels.subarray(row * sourceStride, row * sourceStride + stride),
-        (h - 1 - row) * stride,
-      );
-  } else destination.set(pixels);
+  // WebGPU rows start at top. Cached atlases use bottom-up rows.
+  const stride = w * 4;
+  // Three returns the raw WebGPU buffer, including 256-byte row padding.
+  const sourceStride =
+    pixels.length === w * h * 4 ? stride : Math.ceil(stride / 256) * 256;
+  for (let row = 0; row < h; row++)
+    destination.set(
+      pixels.subarray(row * sourceStride, row * sourceStride + stride),
+      (h - 1 - row) * stride,
+    );
   return destination;
 }
 const boundUniforms = new WeakMap();

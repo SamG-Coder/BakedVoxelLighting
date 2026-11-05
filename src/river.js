@@ -1,3 +1,4 @@
+import { SEA_LEVEL } from "./watershed.js";
 import { waterContactOffset } from "./walk-effects.js";
 import * as T from "three/webgpu";
 import * as N from "three/tsl";
@@ -150,7 +151,11 @@ export function createRiverMaterial(U) {
       0.98,
     ),
   );
-  material.maskNode = depth.greaterThan(0.005);
+  // Below sea level the ocean owns the water; a submerged river sheet would
+  // otherwise show through the sea as sand-coloured, foam-rimmed shapes.
+  material.maskNode = depth
+    .greaterThan(0.005)
+    .and(N.positionWorld.y.greaterThan(SEA_LEVEL + 0.03));
   const planar = N.reflector({
     resolutionScale: 0.5,
     bounces: false,

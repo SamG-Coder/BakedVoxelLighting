@@ -1,13 +1,13 @@
+import { SEA_LEVEL } from "./watershed.js";
 import {
   TERRAIN_SIZE,
   terrainHeight,
   terrainSample,
-  terrainSamplingGLSL,
   inRoadVerge,
 } from "./terrain-field.js";
 import { TREE_TYPES } from "./plant-catalog.js";
 import { patchNoise, woodlandHabitat } from "./habitat.js";
-export const WORLD_VERSION = "watershed-woodland-19";
+export const WORLD_VERSION = "coastal-woodland-20";
 export function random(seed) {
   return () => {
     seed |= 0;
@@ -18,7 +18,6 @@ export function random(seed) {
   };
 }
 export const height = terrainHeight;
-export const terrainGLSL = terrainSamplingGLSL;
 export function makeWorld() {
   const rng = random(851),
     clusters = [],
@@ -34,7 +33,12 @@ export function makeWorld() {
         const tx = x + (rng() - 0.5) * (TERRAIN_SIZE / 32),
           tz = z + (rng() - 0.5) * (TERRAIN_SIZE / 32),
           s = terrainSample(tx, tz);
-        if (s.traffic > 0.13 || s.slope > 0.65 || s.riverDistance < 13)
+        if (
+          s.traffic > 0.13 ||
+          s.slope > 0.65 ||
+          s.riverDistance < 13 ||
+          s.height < SEA_LEVEL + 1.6
+        )
           continue;
         // Coherent forest cores and edges, with sparse individual trees on open hills.
         const wood = woodlandHabitat(tx, tz, s);

@@ -55,7 +55,6 @@ import { prepareWorldLight } from "./world-light.js";
 import worldLightSource from "./world-light.js?raw";
 import * as N from "three/tsl";
 import cloudKernelSource from "./cloud-kernels.js?raw";
-import cloudDensityGLSL from "./shaders/cloud-density.glsl?raw";
 import cloudDensityWGSL from "./shaders/cloud-density.wgsl?raw";
 import { skyColour } from "./native-kernels.js";
 import { ref } from "./tsl-baking.js";
@@ -68,7 +67,7 @@ import {
   treeStreamingStats,
 } from "./vegetation.js";
 import atlasWorkerSource from "./atlas-worker.js?raw";
-import { setShaderBackend, nativeVolumeSource } from "./native-kernels.js";
+import { nativeVolumeSource } from "./native-kernels.js";
 import nativeSource from "./native-kernels.js?raw";
 import { VoxelSun, installVoxelSun } from "./tsl-sun.js";
 import tslBakeSource from "./tsl-baking.js?raw";
@@ -145,6 +144,8 @@ import {
   setTerrainPreparation,
 } from "./environment.js";
 import { prepareRiver, riverStats } from "./river.js";
+import { createOcean, oceanStats } from "./ocean/ocean.js";
+import { SEA_LEVEL } from "./terrain-math.js";
 const $ = (id) => document.getElementById(id);
 const diagnostics = (window.worldDiagnostics = {
   ready: false,
@@ -173,10 +174,15 @@ function fail(e) {
 }
 window.addEventListener("error", (e) => diagnostics.errors.push(e.message));
 window.addEventListener("unhandledrejection", (e) => fail(e.reason));
-const backendChoice =
-  new URLSearchParams(location.search).get("backend") ||
-  localStorage.getItem("worldBackend") ||
-  "webgpu";
+// WebGPU only: rendering, baking and the ocean's compute passes share one
+// GPUDevice. There is no WebGL fallback.
+if (!navigator.gpu) {
+  const message =
+    "This world needs WebGPU. Use a current Chrome, Edge or Safari 26+ with hardware acceleration enabled.";
+  $("error").hidden = false;
+  $("error").textContent = message;
+  throw new Error(message);
+}
 const profileRendering =
   import.meta.env.DEV && new URLSearchParams(location.search).has("profile");
 // Restore the pre-regression default. Temporal reconstruction remains an
@@ -186,7 +192,6 @@ const aaMode =
   requestedAA === "taa" || requestedAA === "taau" ? requestedAA : "msaa";
 const temporalAA = aaMode !== "msaa";
 const renderer = new T.WebGPURenderer({
-  forceWebGL: backendChoice === "webgl2",
   samples: temporalAA ? 0 : 4,
   trackTimestamp: profileRendering,
   canvas: $("world"),
@@ -195,35 +200,27 @@ const renderer = new T.WebGPURenderer({
   powerPreference: "high-performance",
 });
 await renderer.init();
+if (!renderer.backend.isWebGPUBackend) {
+  const message = "WebGPU could not start on this device.";
+  $("error").hidden = false;
+  $("error").textContent = message;
+  throw new Error(message);
+}
 const gpuUploads = getGPUUploads(renderer);
 diagnostics.preparation = {
   uploads: gpuUploads.stats,
   renderer: rendererJobStats,
 };
-setShaderBackend(!!renderer.backend.isWebGPUBackend);
 // This forest has thousands of differently sized instanced batches. Prefer
 // instance attributes over count-sized uniform arrays so each batch count does
 // not create a distinct shader program. This controls Three's optional buffer
 // optimization, not the actual uniform allocation limit of the device.
 renderer.backend.capabilities.getUniformBufferLimit = () => 0;
 installVoxelSun(renderer, lightUniforms);
-const actualBackend = renderer.backend.isWebGPUBackend ? "webgpu" : "webgl2";
-diagnostics.backend = actualBackend;
-diagnostics.requestedBackend = backendChoice;
-diagnostics.bakeBackend = actualBackend;
-document.getElementById("backend").value = backendChoice;
+diagnostics.backend = "webgpu";
+diagnostics.bakeBackend = "webgpu";
 document.getElementById("backendLabel").textContent =
-  `THREE.JS / ${actualBackend.toUpperCase()} / ${actualBackend === "webgpu" ? "WGSL" : "GLSL"}`;
-document.getElementById("backendNote").textContent =
-  actualBackend !== backendChoice
-    ? "WebGPU unavailable. Using WebGL2 for rendering and baking."
-    : "Rendering and baking use the selected backend.";
-document.getElementById("backend").onchange = (event) => {
-  localStorage.setItem("worldBackend", event.target.value);
-  const url = new URL(location.href);
-  url.searchParams.set("backend", event.target.value);
-  location.assign(url);
-};
+  "THREE.JS / WEBGPU / WGSL";
 renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5));
 $("antialiasing").value = aaMode;
 $("antialiasing").onchange = (event) => {
@@ -837,7 +834,9 @@ async function loadAssets() {
       );
       if (!response.ok) throw Error(`Missing ${name}`);
       const blob = await response.blob();
-      const hash = await digest(await blob.arrayBuffer());
+      // The suffix versions decode-time processing (transparent colour fill),
+      // so atlases and HLODs captured from the old dark-fringed pixels rebake.
+      const hash = (await digest(await blob.arrayBuffer())) + ":fill1";
       const pixels = await decodeTexture(blob);
       const map = new T.DataTexture(
         pixels.data,
@@ -1093,6 +1092,7 @@ const frameClock = new FrameClock();
 const walkingForward = new T.Vector3();
 const walkingRight = new T.Vector3();
 const treeLodDistances = [85, 190, 420];
+let ocean = null;
 let frameTime = 0,
   animationId = null,
   loopStarted = false,
@@ -1170,6 +1170,11 @@ function animate(now) {
     );
     camera.position.x = collision.x;
     camera.position.z = collision.z;
+    // Wade into the shallows, but not out to sea.
+    if (height(camera.position.x, camera.position.z) < SEA_LEVEL - 0.7) {
+      camera.position.x = beforeX;
+      camera.position.z = beforeZ;
+    }
     camera.position.y = height(camera.position.x, camera.position.z) + 1.85;
     walkEffectStats.collisionChecks = walkCollision.checks;
   } else {
@@ -1186,7 +1191,11 @@ function animate(now) {
     -TERRAIN_SIZE / 2 + 20,
     TERRAIN_SIZE / 2 - 20,
   );
-  const floor = terrainCameraFloor(camera.position.x, camera.position.z);
+  // Free flight stays above the waves; there is no underwater camera.
+  const floor = Math.max(
+    terrainCameraFloor(camera.position.x, camera.position.z),
+    walking ? -Infinity : SEA_LEVEL + 1.6,
+  );
   if (camera.position.y < floor) {
     camera.position.y = floor;
   }
@@ -1291,6 +1300,8 @@ function animate(now) {
   };
   renderer.info.reset();
   updateClouds(renderer, now, lightUniforms, camera);
+  ocean?.update(camera, lightUniforms.time.value, sunDirection);
+  mark?.("ocean");
   mark?.("clouds");
   composer.render();
   lightUniforms.previousCameraPosition.value.copy(camera.position);
@@ -1369,6 +1380,15 @@ window.addEventListener("resize", () => {
   composer.setSize(innerWidth, innerHeight);
 });
 window.worldTest = {
+  // Local verification: fly to a fixed pose regardless of the current mode.
+  async flyTo(position, target) {
+    if (walking || !cameraModeActive) await enterCameraMode(false);
+    walking = false;
+    controls.enabled = true;
+    camera.position.set(...position);
+    controls.target.set(...target);
+    controls.lookAtTarget();
+  },
   terrainCameraFloor,
   getCloudTarget,
   camera,
@@ -1448,7 +1468,7 @@ async function start() {
   await prepareClouds(
     renderer,
     cache,
-    await digest(cloudKernelSource + cloudDensityGLSL + cloudDensityWGSL),
+    await digest(cloudKernelSource + cloudDensityWGSL),
     lightUniforms,
     camera,
   );
@@ -1466,6 +1486,10 @@ async function start() {
   );
   progress("Baking flowing river surface", 0.025);
   await prepareRiver(renderer, cache);
+  progress("Starting the WebGPU ocean", 0.026);
+  ocean = createOcean(renderer, scene, lightUniforms);
+  diagnostics.ocean = oceanStats;
+  window.worldTest.ocean = ocean;
   diagnostics.environment = buildEnvironment(scene, assets);
   window.worldTest.river = diagnostics.environment.water;
   diagnostics.environment = {

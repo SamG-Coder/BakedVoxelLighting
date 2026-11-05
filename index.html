@@ -114,14 +114,8 @@
             <p class="settings-description">
               Choose how the world is rendered.
             </p>
-            <label
-              >Graphics backend<select id="backend">
-                <option value="webgpu">WebGPU · WGSL</option>
-                <option value="webgl2">WebGL2 · GLSL</option>
-              </select></label
-            >
             <p id="backendNote" class="note">
-              Switching backend reloads the world; baked data stays cached.
+              Rendering, baking and the ocean simulation run on WebGPU.
             </p>
             <label
               >Anti-aliasing<select id="antialiasing">

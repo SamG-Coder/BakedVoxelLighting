@@ -1,17 +1,8 @@
 import { nativeFunction } from "./native-kernels.js";
-import densityGLSL from "./shaders/cloud-density.glsl?raw";
 import densityWGSL from "./shaders/cloud-density.wgsl?raw";
-export const cloudShape = nativeFunction(densityGLSL, densityWGSL);
-export const cloudSample = nativeFunction(
-  `vec4 cloudSample(sampler2D map,vec3 p,float flipY){
-    if(p.y<0.||p.y>1.)return vec4(0.);
-    float y=clamp(p.y*48.-.5,0.,47.),a=floor(y),b=min(a+1.,47.);
-    vec2 pixel=fract(p.xz)*255.+.5;
-    vec2 ua=(pixel+vec2(mod(a,8.),floor(a/8.))*256.)/vec2(2048.,1536.);
-    vec2 ub=(pixel+vec2(mod(b,8.),floor(b/8.))*256.)/vec2(2048.,1536.);
-    return mix(textureLod(map,ua,0.),textureLod(map,ub,0.),fract(y));
-  }`,
-  `fn cloudSample(map:texture_2d<f32>,linearSampler:sampler,p:vec3f,flipY:f32)->vec4f{
+export const cloudShape = nativeFunction(densityWGSL);
+export const cloudSample =
+  nativeFunction(`fn cloudSample(map:texture_2d<f32>,linearSampler:sampler,p:vec3f,flipY:f32)->vec4f{
     if(p.y<0.||p.y>1.){return vec4f(0.);}
     let y=clamp(p.y*48.-.5,0.,47.);let a=floor(y);let b=min(a+1.,47.);
     let pixel=fract(p.xz)*255.+vec2f(.5);
@@ -19,15 +10,8 @@ export const cloudSample = nativeFunction(
     var ub=(pixel+vec2f(b-floor(b/8.)*8.,floor(b/8.))*256.)/vec2f(2048.,1536.);
     if(flipY>.5){ua.y=1.-ua.y;ub.y=1.-ub.y;}
     return mix(textureSampleLevel(map,linearSampler,ua,0.),textureSampleLevel(map,linearSampler,ub,0.),fract(y));
-  }`,
-);
+  }`);
 export const cloudLighting = nativeFunction(
-  `vec4 cloudLighting(sampler2D map,vec3 p,vec3 sun,float flipY){
-    float density=cloudSample(map,p,flipY).r,depth=0.;
-    if(density<.002)return vec4(0.,1.,p.y,1.);
-    for(int i=1;i<=7;i++)depth+=cloudSample(map,p+sun*float(i)*75./vec3(6000.,620.,6000.),flipY).r;
-    return vec4(density,exp(-depth*.64),p.y,1.);
-  }`,
   `fn cloudLighting(map:texture_2d<f32>,linearSampler:sampler,p:vec3f,sun:vec3f,flipY:f32)->vec4f{
     let density=cloudSample(map,linearSampler,p,flipY).r;var depth=0.;
     if(density<.002){return vec4f(0.,1.,p.y,1.);}
@@ -36,52 +20,63 @@ export const cloudLighting = nativeFunction(
   }`,
   [cloudSample],
 );
-export const cloudTrace = nativeFunction(
-  `vec4 cloudTrace(sampler2D map,vec3 eye,vec3 ray,vec3 sun,float time,float flipY){
-    if(ray.y<.025)return vec4(0.);
-    float start=max(0.,(650.-eye.y)/ray.y),end=min(11000.,(1270.-eye.y)/ray.y);
-    if(end<=start)return vec4(0.);
-    float stepSize=(end-start)/64.,tr=1.;vec3 colour=vec3(0.);
-    float forward=pow(max(dot(ray,sun),0.),12.);float jitter=fract(sin(dot(ray.xz,vec2(127.1,311.7)))*43758.5453);
-    for(int i=0;i<64;i++){
-      vec3 p=eye+ray*(start+(float(i)+fract(jitter+float(i)*.618))*stepSize);
-      p.xz+=vec2(2.,.6)*time;
-      vec4 c=cloudSample(map,(p-vec3(0.,650.,0.))/vec3(6000.,620.,6000.),flipY);
-      float a=1.-exp(-c.r*stepSize*.008);
-      vec3 light=vec3(.30,.38,.50)*(.72+.38*c.b)+vec3(1.,.96,.88)*c.g*(.82+forward*.34);
-      colour+=tr*a*light;tr*=1.-a;if(tr<.015)break;
+// Henyey-Greenstein phase for forward/back scattering in cloud droplets.
+export const cloudPhase = nativeFunction(`fn cloudPhase(cosine:f32,g:f32)->f32{
+    let g2=g*g;return (1.-g2)/(12.566371*pow(max(1.+g2-2.*g*cosine,1e-4),1.5));
+  }`);
+// Small periodic value noise used to erode the baked density into crisp,
+// cauliflower-like edges at a resolution the 23 m bake cannot hold.
+export const cloudDetail = nativeFunction(`fn cloudDetail(p:vec3f)->f32{
+    var v=p;var sum=0.;var amp=.55;
+    for(var o:i32=0;o<3;o++){
+      let c=floor(v);var f=fract(v);f=f*f*(vec3f(3.)-2.*f);var value=0.;
+      for(var z:i32=0;z<2;z++){for(var y:i32=0;y<2;y++){for(var x:i32=0;x<2;x++){
+        let q=vec3f(f32(x),f32(y),f32(z));
+        let h=fract(sin(dot(c+q,vec3f(127.1,311.7,74.7)))*43758.5453);
+        let w=mix(vec3f(1.)-f,f,q);value+=h*w.x*w.y*w.z;
+      }}}
+      sum+=value*amp;amp*=.5;v=v*2.07+vec3f(17.,3.,9.);
     }
-    float fade=smoothstep(.025,.075,ray.y);
-    return vec4(colour*fade,(1.-tr)*fade);
-  }`,
+    return sum;
+  }`);
+export const cloudTrace = nativeFunction(
   `fn cloudTrace(map:texture_2d<f32>,linearSampler:sampler,eye:vec3f,ray:vec3f,sun:vec3f,time:f32,flipY:f32)->vec4f{
     if(ray.y<.025){return vec4f(0.);}
     let start=max(0.,(650.-eye.y)/ray.y);let end=min(11000.,(1270.-eye.y)/ray.y);
     if(end<=start){return vec4f(0.);}
     let stepSize=(end-start)/64.;var tr=1.;var colour=vec3f(0.);
-    let forward=pow(max(dot(ray,sun),0.),12.);let jitter=fract(sin(dot(ray.xz,vec2f(127.1,311.7)))*43758.5453);
+    // Dual-lobe phase: strong forward peak (silver lining) plus back-scatter.
+    let cosine=dot(ray,sun);
+    let phase=mix(cloudPhase(cosine,.62),cloudPhase(cosine,-.22),.3)*12.566371;
+    let jitter=fract(sin(dot(ray.xz,vec2f(127.1,311.7)))*43758.5453);
     for(var i:i32=0;i<64;i++){
       var p=eye+ray*(start+(f32(i)+fract(jitter+f32(i)*.618))*stepSize);
       p+=vec3f(2.,0.,.6)*time;
       let c=cloudSample(map,linearSampler,(p-vec3f(0.,650.,0.))/vec3f(6000.,620.,6000.),flipY);
-      let a=1.-exp(-c.r*stepSize*.008);
-      let light=vec3f(.30,.38,.50)*(.72+.38*c.b)+vec3f(1.,.96,.88)*c.g*(.82+forward*.34);
-      colour+=tr*a*light;tr*=1.-a;if(tr<.015){break;}
+      if(c.r<.004){continue;}
+      // Erode the soft baked shape: crisp billows, wispy thin edges.
+      let detail=cloudDetail(p*vec3f(1./34.,1./24.,1./34.)+vec3f(0.,time*.004,0.));
+      // Billows everywhere (not only the fringe), wisps where the bake is thin.
+      let d=max(0.,c.r*1.6-detail*.62-(1.-min(c.r*1.6,1.))*detail*.8);
+      if(d<=0.){continue;}
+      let a=1.-exp(-d*stepSize*.009);
+      // Height ambient: grey-blue bases, bright tops.
+      let h=c.b;
+      let ambient=mix(vec3f(.12,.15,.21),vec3f(.44,.52,.66),pow(h,1.6));
+      // Beer-powder: interiors facing the sun are darker at the edges.
+      let powder=1.-exp(-d*1.8);
+      let sunBeer=c.g;
+      let direct=vec3f(1.,.95,.86)*sunBeer*mix(.55,1.,powder)*phase*.62;
+      // Cheap multiple scattering: light leaks deeper than single scattering.
+      let multi=vec3f(1.,.96,.9)*pow(sunBeer,.25)*.12;
+      colour+=tr*a*(ambient+direct+multi);tr*=1.-a;if(tr<.015){break;}
     }
     let fade=smoothstep(.025,.075,ray.y);
     return vec4f(colour*fade,(1.-tr)*fade);
   }`,
-  [cloudSample],
+  [cloudSample, cloudPhase, cloudDetail],
 );
 export const cloudShadow = nativeFunction(
-  `float cloudShadow(sampler2D map,vec2 world,vec3 sun,float time,float flipY){
-    if(sun.y<.035)return 0.;float depth=0.;
-    for(int i=0;i<16;i++){
-      float h=(float(i)+.5)/16.;vec2 xz=world+sun.xz*(650.+h*620.)/sun.y+vec2(2.,.6)*time;
-      depth+=cloudSample(map,vec3(xz.x/6000.,h,xz.y/6000.),flipY).r;
-    }
-    return 1.-exp(-depth*.18/max(sun.y,.2));
-  }`,
   `fn cloudShadow(map:texture_2d<f32>,linearSampler:sampler,world:vec2f,sun:vec3f,time:f32,flipY:f32)->f32{
     if(sun.y<.035){return 0.;}var depth=0.;
     for(var i:i32=0;i<16;i++){

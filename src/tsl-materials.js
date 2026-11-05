@@ -7,6 +7,7 @@ import * as K from "./native-kernels.js";
 import * as T from "three/webgpu";
 import * as N from "three/tsl";
 import { ref, texRef, terrainNode } from "./tsl-baking.js";
+import { SEA_LEVEL } from "./watershed.js";
 import { attributeInstanceMatrix } from "./attribute-instances.js";
 import { rootConformPosition } from "./root-conform.js";
 import { needsMotionVectors } from "./motion-pass.js";
@@ -277,6 +278,7 @@ function createDecorated(original, options, U, grid) {
     });
     m.userData.moss = true;
   }
+  let wetSheen = null;
   let groundFade = N.float(0);
   let groundResponse = N.float(0);
   let base = N.materialColor;
@@ -306,8 +308,44 @@ function createDecorated(original, options, U, grid) {
         .div(grid),
     );
     const stoneCoordinates = surfaceCoordinates(guv.mul(0.5), p.xz);
-    const stoneSample = variedSurface(terrainColors.depth(1), stoneCoordinates);
-    const stone = stoneSample.rgb;
+    // Triplanar rock: cliffs and steep banks project the stone texture from the
+    // side instead of stretching a top-down projection down the face.
+    const geometric = N.normalize(N.normalLocal);
+    const facing = N.pow(N.abs(geometric), N.vec3(4));
+    const planes = facing.div(facing.x.add(facing.y).add(facing.z));
+    const sideX = surfaceCoordinates(N.vec2(p.z, p.y).mul(0.36), p.xz);
+    const sideZ = surfaceCoordinates(N.vec2(p.x, p.y).mul(0.36), p.xz);
+    const stoneSample = variedSurface(terrainColors.depth(1), stoneCoordinates)
+      .mul(planes.y)
+      .add(variedSurface(terrainColors.depth(1), sideX).mul(planes.x))
+      .add(variedSurface(terrainColors.depth(1), sideZ).mul(planes.z));
+    // Cliffs: sedimentary strata (warm/grey bands) on steep faces.
+    const steep = N.float(1).sub(N.smoothstep(0.55, 0.85, planes.y));
+    // Multi-octave strata: bands of varying thickness, not pinstripes.
+    const strataNoise = (y) =>
+      N.mx_fractal_noise_float(
+        N.vec3(p.x.mul(0.014), y.mul(0.32), p.z.mul(0.014)),
+        3,
+        2.3,
+        0.5,
+        1,
+      );
+    // Strata strength varies across the face, so bands break up and pinch out.
+    const strataAmount = N.smoothstep(
+      -0.3,
+      0.4,
+      N.mx_noise_float(N.vec3(p.xz.mul(0.011), p.y.mul(0.02))),
+    );
+    const strata = strataNoise(p.y).mul(strataAmount);
+    const stone = N.mix(
+      stoneSample.rgb,
+      N.mix(
+        stoneSample.rgb.mul(N.vec3(1.18, 1.02, 0.84)),
+        stoneSample.rgb.mul(0.72),
+        N.smoothstep(-0.25, 0.35, strata),
+      ),
+      steep,
+    );
     const micro = N.float(1).sub(
       N.smoothstep(40, 160, N.distance(N.cameraPosition, p)),
     );
@@ -381,6 +419,10 @@ function createDecorated(original, options, U, grid) {
       mean,
       forestFloor,
       woodland: habitat.a,
+      // Aperiodic large-scale brightness variation (was a sine stripe).
+      macroTone: N.float(0.9).add(
+        N.mx_fractal_noise_float(N.vec3(p.xz.mul(0.021), 0.5), 3, 2, 0.5, 0.12),
+      ),
     });
     m.normalNode = N.normalMap(
       N.mix(
@@ -390,6 +432,17 @@ function createDecorated(original, options, U, grid) {
       ),
       N.vec2(m.normalScale.x, m.normalScale.y),
     );
+    // Strata ledges: tilt the normal by the vertical band gradient on cliffs.
+    const ledge = strataNoise(p.y.add(0.25))
+      .sub(strataNoise(p.y.sub(0.25)))
+      .mul(2)
+      .mul(strataAmount)
+      .mul(steep)
+      .mul(rockWeight);
+    const ledgeTilt = N.cameraViewMatrix.mul(
+      N.vec4(N.vec3(0, ledge.mul(0.8), 0), 0),
+    ).xyz;
+    m.normalNode = N.normalize(m.normalNode.add(ledgeTilt));
     const canopy = normal.normalize();
     const canopyView = N.cameraViewMatrix
       .mul(N.vec4(canopy, 0))
@@ -404,6 +457,86 @@ function createDecorated(original, options, U, grid) {
       0.67,
       groundInfluence.b.mul(N.float(1).sub(groundInfluence.a)),
     );
+    // Beach sand above the waterline. Water optics (refraction, caustics,
+    // absorption) are computed by the ocean surface, as in ClearWater.
+    const aboveSea = p.y.sub(SEA_LEVEL);
+    const beach = N.float(1)
+      .sub(N.smoothstep(0.9, 2.7, aboveSea.add(soilSample.a.sub(0.5).mul(1.1))))
+      .mul(N.float(1).sub(rockWeight.mul(0.75)));
+    // Sand: aperiodic tone patches and fine grain on top of the soil texture.
+    const tone = N.mx_noise_float(N.vec3(p.xz.mul(0.09), 2.1))
+      .mul(0.1)
+      .add(N.mx_noise_float(N.vec3(p.xz.mul(0.9), 5.3)).mul(0.06))
+      .add(N.mx_noise_float(N.vec3(p.xz.mul(7.5), 8.7)).mul(0.05))
+      .add(1);
+    const sand = N.mix(
+      soil.mul(N.vec3(1.25, 1.1, 0.82)),
+      N.vec3(0.58, 0.48, 0.33),
+      0.55,
+    ).mul(tone);
+    m.colorNode = N.mix(m.colorNode, sand, beach);
+    // Wave-formed ripples: crests roughly parallel to the incoming swell but
+    // strongly warped, with varying spacing, forks and patchy coverage (a
+    // straight, even comb reads as ruled lines through the water).
+    const rippleWarp = N.mx_fractal_noise_float(
+      N.vec3(p.xz.mul(0.11), 1.7),
+      3,
+      2.1,
+      0.5,
+      1,
+    ).mul(7.5);
+    const spacing = N.float(0.12).add(
+      N.mx_noise_float(N.vec3(p.xz.mul(0.05), 4.2)).mul(0.035),
+    );
+    const ripplePhase = p.x
+      .mul(0.09)
+      .add(p.z.mul(0.996))
+      .div(spacing)
+      .mul(Math.PI * 2)
+      .add(rippleWarp);
+    const ripplePatch = N.smoothstep(
+      -0.15,
+      0.35,
+      N.mx_noise_float(N.vec3(p.xz.mul(0.07), 9.1)),
+    );
+    const rippleStrength = beach
+      .mul(ripplePatch)
+      .mul(N.float(1).sub(N.smoothstep(4, 18, N.distance(N.cameraPosition, p))))
+      .mul(0.11);
+    // Asymmetric ripple profile slope (steeper lee side).
+    const rippleSlope = N.cos(ripplePhase)
+      .add(N.cos(ripplePhase.mul(2)).mul(0.35))
+      .mul(rippleStrength);
+    const rippleTilt = N.cameraViewMatrix.mul(
+      N.vec4(N.vec3(0.09, 0, 0.996).mul(rippleSlope.negate()), 0),
+    ).xyz;
+    m.normalNode = N.normalize(m.normalNode.add(rippleTilt));
+    if (U.shoreWaves) {
+      // Swash-wetted sand: darker and glossy while water fills the pores,
+      // drying after each backwash; damp everywhere below the run-up limit.
+      const wet = U.shoreWaves.wetness(p.xz, aboveSea);
+      m.colorNode = m.colorNode.mul(
+        N.mix(N.vec3(1), N.vec3(0.5, 0.52, 0.56), wet),
+      );
+      m.roughnessNode = N.mix(m.roughnessNode, 0.1, wet);
+      // A water film mirrors the sky (and its clouds) at grazing angles.
+      const view = N.normalize(N.cameraPosition.sub(p));
+      const mirror = N.normalize(
+        N.vec3(view.x.negate(), view.y, view.z.negate()),
+      );
+      const grazing = N.float(1).sub(N.clamp(view.y, 0, 1));
+      const fresnel = N.float(0.02).add(N.pow(grazing, 5).mul(0.98));
+      wetSheen = K.skyColour({
+        ray: mirror,
+        sun: ref(U, "liveSunDirection", "vec3").normalize(),
+        cloud: N.vec4(0),
+        daylight: ref(U, "daylight"),
+      })
+        .mul(fresnel)
+        .mul(wet.mul(wet))
+        .mul(0.45);
+    }
+    base = m.colorNode;
   }
   if (grass && !surfacePayload) {
     const mirror = grassAtlas ? grassMirror() : N.float(1);
@@ -467,6 +600,7 @@ function createDecorated(original, options, U, grid) {
     .mul(indirect)
     .mul(ref(U, "bakedEnabled"))
     .mul(N.float(0.7).add(N.max(N.dot(N.normalWorld, bent), 0).mul(0.3)));
+  if (wetSheen) m.emissiveNode = m.emissiveNode.add(wetSheen);
   return fade ? fadeTSL(m) : m;
 }
 let mossEnvironmentUniforms;

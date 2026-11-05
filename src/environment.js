@@ -1,3 +1,4 @@
+import { SEA_LEVEL } from "./watershed.js";
 import { sampleHydrology, regionalHeight } from "./watershed.js";
 import * as T from "three/webgpu";
 import { decorate, lightUniforms } from "./lighting.js";
@@ -152,7 +153,22 @@ export function buildEnvironment(scene, assets) {
     for (let x = 0; x < TERRAIN_TILE_COUNT; x++) {
       const cx = -TERRAIN_SIZE / 2 + (x + 0.5) * size,
         cz = -TERRAIN_SIZE / 2 + (z + 0.5) * size;
+      // Shorelines and swash films trace the terrain mesh exactly, so tiles
+      // spanning the intertidal band keep full precision like river beds.
+      let coastTile = false;
+      for (let j = 0; j <= 4 && !coastTile; j++)
+        for (let i = 0; i <= 4; i++) {
+          const h = height(
+            cx + (i / 4 - 0.5) * size,
+            cz + (j / 4 - 0.5) * size,
+          );
+          if (h > SEA_LEVEL - 4 && h < SEA_LEVEL + 4) {
+            coastTile = true;
+            break;
+          }
+        }
       const riverTile =
+        coastTile ||
         sampleHydrology(cx, cz, waterQuery).distance < size * 0.75 + 20;
       // Channel beds retain full precision at every distance. One resident mesh
       // avoids constructing/uploading three identical copies of these pages.
@@ -288,7 +304,8 @@ export function buildEnvironment(scene, assets) {
         xx = x + Math.cos(a) * r,
         zz = z + Math.sin(a) * r,
         s = terrainSample(xx, zz);
-      if (s.traffic > 0.08) continue;
+      // Rocks stay out of the sea and the swash zone.
+      if (s.traffic > 0.08 || s.height < SEA_LEVEL + 0.8) continue;
       const scale = j === 0 ? 1.2 + rng() * 2 : 0.18 + rng() * 0.9;
       sets[Math.floor(rng() * 6)].push({
         p: [xx, s.height - scale * 0.34, zz],

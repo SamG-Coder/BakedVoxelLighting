@@ -30,7 +30,7 @@ export function skinPath(path, level = 0) {
   if (path.rootFlare) {
     const end = Math.min(distance.at(-1), 1.8),
       samples = [];
-    const rings = level ? 8 : 16;
+    const rings = level > 1 ? 3 : level ? 8 : 16;
     for (let i = 0; i <= rings; i++) samples.push(at((end * i) / rings));
     for (let i = 1; i < points.length; i++)
       if (distance[i] > end) samples.push({ p: points[i], r: radii[i] });
@@ -219,13 +219,53 @@ function tube(path, sides, plant, level) {
 export function growPlant(seed, species = 0, shrub = false, age = 1) {
   const plant = growStructure(seed, species, shrub, age);
   const unionGeometries = new Map();
+  // Far wood (190-420 m) sits behind canopy billboards: a few pixels of trunk
+  // and main limbs. Thin twigs, CSG collars and round cross-sections are
+  // invisible there but previously cost ~8-13k triangles per tree.
+  function farGeometry() {
+    const parts = plant.paths
+      .filter((p) => p.rootFlare || p.radii[0] > (shrub ? 0.012 : 0.05))
+      .map((path) => {
+        const r = path.radii[0];
+        const sides = path.rootFlare ? 10 : r > 0.2 ? 6 : r > 0.1 ? 4 : 3;
+        const count = path.points.length;
+        const keep =
+          count <= 3
+            ? path.points.map((_, i) => i)
+            : path.rootFlare || r > 0.2
+              ? [
+                  0,
+                  Math.floor(count / 3),
+                  Math.floor((2 * count) / 3),
+                  count - 1,
+                ]
+              : [0, Math.floor(count / 2), count - 1];
+        return tube(
+          {
+            ...path,
+            // No smoothed collar: a fork joint is sub-pixel at this range.
+            attachment: null,
+            points: keep.map((i) => path.points[i]),
+            radii: keep.map((i) => path.radii[i]),
+          },
+          sides,
+          plant,
+          2,
+        );
+      });
+    const g = mergeGeometries(parts);
+    parts.forEach((p) => p.dispose());
+    return g;
+  }
   function geometry(level) {
+    if (level === 2) return farGeometry();
     const solid = shrub
       ? []
       : plant.paths.filter((p) => p.rootFlare || p.radii[0] > 0.06);
     const parts = plant.paths
       .filter((p) => !solid.includes(p))
-      .filter((p) => level < 2 || p.radii[0] > (shrub ? 0.008 : 0.025))
+      // Twigs under ~4 cm are sub-pixel beyond the 85 m high-detail range.
+      .filter((p) => level < 1 || p.radii[0] > (shrub ? 0.006 : 0.02))
       .map((path) => {
         const r = path.radii[0];
         const sides =

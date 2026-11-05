@@ -1,7 +1,7 @@
 {
   "name": "bakedvoxellighting",
   "version": "1.0.0",
-  "description": "Desktop Three.js woodland with browser GPU baking, indexed streaming, vegetation HLOD and a 24-minute day/night cycle.",
+  "description": "WebGPU coastal woodland with browser GPU baking, an FFT ocean, indexed streaming, vegetation HLOD and a 24-minute day/night cycle.",
   "main": "index.js",
   "scripts": {
     "postinstall": "node scripts/patch-three-allocations.mjs",
@@ -19,7 +19,7 @@
     "test:landscape": "node scripts/landscape-data.mjs",
     "test:frames": "node scripts/verify-frame-clock.mjs && node scripts/verify-frame-browser.mjs",
     "test:terrain-faces": "node scripts/verify-terrain-faces.mjs",
-    "test:backends": "node scripts/verify-backends.mjs webgpu && node scripts/verify-backends.mjs webgl2"
+    "test:backends": "node scripts/verify-backends.mjs webgpu"
   },
   "keywords": [],
   "author": "",

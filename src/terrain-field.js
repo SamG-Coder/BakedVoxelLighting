@@ -102,10 +102,6 @@ for (let i = 0; i < heights.length; i++) {
   terrainPixels[i * 4 + 3] = slopes[i];
 }
 
-export const terrainSamplingGLSL = `uniform sampler2D terrainField;
-vec4 terrainData(vec2 p){vec2 uv=clamp((p+${(TERRAIN_SIZE / 2).toFixed(1)})/${TERRAIN_SIZE.toFixed(1)},0.,1.);vec2 g=uv*${N - 1}.;ivec2 a=ivec2(min(floor(g),vec2(${N - 2}.)));vec2 f=fract(g);return mix(mix(texelFetch(terrainField,a,0),texelFetch(terrainField,a+ivec2(1,0),0),f.x),mix(texelFetch(terrainField,a+ivec2(0,1),0),texelFetch(terrainField,a+ivec2(1,1),0),f.x),f.y);}
-float terrain(vec2 p){return terrainData(p).r;}`;
-
 export function applyTreeInfluence(trees) {
   for (const tree of trees) {
     const crownRadius =

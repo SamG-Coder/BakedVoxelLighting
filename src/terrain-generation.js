@@ -4,7 +4,9 @@ import {
   TERRAIN_SIZE,
   regionalHeight,
   sampleHydrology,
+  SEA_LEVEL,
 } from "./terrain-math.js";
+import { riverSegments, coastLine } from "./watershed.js";
 import { bankExposure, bankGravel } from "./riverbank.js";
 import { carveRiverHeight } from "./river-profile.js";
 import { buildRiverData } from "./river-data.js";
@@ -34,9 +36,18 @@ export function generateTerrain() {
     for (let x = 0; x < N; x++) {
       const wx = x * CELL - TERRAIN_SIZE / 2,
         wz = z * CELL - TERRAIN_SIZE / 2;
+      const regional = regionalHeight(wx, wz);
+      // Keep small-scale relief out of the shore zone; the nearshore follows
+      // the smooth equilibrium profile instead of forming bars and hollows.
+      const away = Math.min(
+        1,
+        Math.max(0, (Math.abs(regional - SEA_LEVEL) - 1.5) / 5),
+      );
       heights[z * N + x] =
-        regionalHeight(wx, wz) +
-        (fbm(wx * 0.028 + 10, wz * 0.028 - 13) - 0.5) * 2.4;
+        regional +
+        (fbm(wx * 0.028 + 10, wz * 0.028 - 13) - 0.5) *
+          2.4 *
+          Math.max(0.08, away * away * (3 - 2 * away));
     }
   original.set(heights);
   function sampleGrid(field, x, z) {
@@ -134,6 +145,61 @@ export function generateTerrain() {
       }
     for (let i = 0; i < heights.length; i++) heights[i] += delta[i];
   }
+  // Waves plane the intertidal zone: droplet erosion carves rills across
+  // beaches that real swash smooths away within a tide. Blend heights near
+  // sea level towards a broad (~12 m) blur, keeping the beach profile.
+  {
+    let z0 = N,
+      z1 = -1;
+    for (let z = 0; z < N; z++)
+      for (let x = 0; x < N; x += 4) {
+        const h = heights[z * N + x];
+        if (h > SEA_LEVEL - 7 && h < SEA_LEVEL + 6) {
+          z0 = Math.min(z0, z);
+          z1 = Math.max(z1, z);
+        }
+      }
+    if (z1 >= 0) {
+      const r = 6,
+        rows = Math.min(N - 1, z1 + r * 3) - Math.max(0, z0 - r * 3) + 1,
+        base = Math.max(0, z0 - r * 3) * N,
+        a = heights.slice(base, base + rows * N),
+        b = new Float32Array(a.length);
+      for (let pass = 0; pass < 3; pass++) {
+        for (let z = 0; z < rows; z++) {
+          let sum = 0;
+          for (let x = -r; x <= r; x++)
+            sum += a[z * N + Math.max(0, Math.min(N - 1, x))];
+          for (let x = 0; x < N; x++) {
+            b[z * N + x] = sum / (2 * r + 1);
+            sum +=
+              a[z * N + Math.min(N - 1, x + r + 1)] -
+              a[z * N + Math.max(0, x - r)];
+          }
+        }
+        for (let x = 0; x < N; x++) {
+          let sum = 0;
+          for (let z = -r; z <= r; z++)
+            sum += b[Math.max(0, Math.min(rows - 1, z)) * N + x];
+          for (let z = 0; z < rows; z++) {
+            a[z * N + x] = sum / (2 * r + 1);
+            sum +=
+              b[Math.min(rows - 1, z + r + 1) * N + x] -
+              b[Math.max(0, z - r) * N + x];
+          }
+        }
+      }
+      for (let i = 0; i < a.length; i++) {
+        const h = heights[base + i],
+          t = Math.min(
+            Math.max(0, Math.min(1, (h - (SEA_LEVEL - 7)) / 3)),
+            Math.max(0, Math.min(1, (SEA_LEVEL + 6 - h) / 3)),
+          ),
+          w = t * t * (3 - 2 * t);
+        heights[base + i] = h + (a[i] - h) * w;
+      }
+    }
+  }
   // Carve all connected reaches, preserving the graph's downhill water surface.
   const hydrology = {};
   for (let z = 0; z < N; z++)
@@ -148,8 +214,84 @@ export function generateTerrain() {
         groundInfluence[i * 4 + 2] = Math.round(bank * 255);
         groundInfluence[i * 4 + 3] = Math.round(bankGravel(wx, wz) * 255);
       }
-      heights[i] = carveRiverHeight(heights[i], wx, wz, h);
+      const carved = carveRiverHeight(heights[i], wx, wz, h);
+      // Near and below sea level river shaping may only deepen: raising banks
+      // to river level there pushed the seabed up into blobby islands.
+      const coastal = Math.max(
+        0,
+        Math.min(1, (SEA_LEVEL + 2.5 - heights[i]) / 2),
+      );
+      heights[i] =
+        carved * (1 - coastal) + Math.min(heights[i], carved) * coastal;
     }
+  // River mouths: the coastal beach builds a berm across every outlet, which
+  // left rivers dead-ending in lagoons. Carve each terminal reach out to the
+  // sea as an estuary that flares and deepens into the nearshore profile.
+  {
+    const outgoing = new Set(riverSegments.map((s) => s.node));
+    for (const s of riverSegments) {
+      if (outgoing.has(s.receiver) || s.area < 300000) continue;
+      if (
+        Math.abs(s.bx) > TERRAIN_SIZE / 2 ||
+        Math.abs(s.bz) > TERRAIN_SIZE / 2
+      )
+        continue;
+      if (s.by > SEA_LEVEL + 3) continue;
+      // Head seawards: the coast runs east-west, open water lies to -z.
+      const ax = s.bx,
+        az = s.bz,
+        bx = s.bx + s.fx * 20,
+        bz = coastLine(s.bx) - 90;
+      const length = Math.hypot(bx - ax, bz - az),
+        ux = (bx - ax) / length,
+        uz = (bz - az) / length;
+      const maxHalf = s.wb * 3.5 + 10;
+      const x0 = Math.max(
+          0,
+          Math.floor((Math.min(ax, bx) - maxHalf + TERRAIN_SIZE / 2) / CELL),
+        ),
+        x1 = Math.min(
+          N - 1,
+          Math.ceil((Math.max(ax, bx) + maxHalf + TERRAIN_SIZE / 2) / CELL),
+        ),
+        z0 = Math.max(
+          0,
+          Math.floor((Math.min(az, bz) - maxHalf + TERRAIN_SIZE / 2) / CELL),
+        ),
+        z1 = Math.min(
+          N - 1,
+          Math.ceil((Math.max(az, bz) + maxHalf + TERRAIN_SIZE / 2) / CELL),
+        );
+      for (let z = z0; z <= z1; z++)
+        for (let x = x0; x <= x1; x++) {
+          const wx = x * CELL - TERRAIN_SIZE / 2,
+            wz = z * CELL - TERRAIN_SIZE / 2;
+          const along = (wx - ax) * ux + (wz - az) * uz,
+            t = Math.max(0, Math.min(1, along / length));
+          const d = Math.hypot(
+            wx - ax - ux * length * t,
+            wz - az - uz * length * t,
+          );
+          const flare = t * t * (3 - 2 * t);
+          const half = s.wb * (1.3 + flare * 2.2) + 4;
+          if (d > half * 1.25) continue;
+          const bed =
+            Math.min(s.by, SEA_LEVEL - 0.3) - (0.9 + s.wb * 0.08) - flare * 1.2;
+          const cross = d / half,
+            k = Math.max(0, Math.min(1, (cross - 0.55) / 0.7)),
+            bank = k * k * (3 - 2 * k);
+          const i = z * N + x;
+          heights[i] = Math.min(heights[i], bed + (heights[i] - bed) * bank);
+        }
+    }
+  }
+  // River-bank exposure is a land feature; under the sea it showed through
+  // the water as sand-coloured blobs. Fade it out across the waterline.
+  for (let i = 0; i < N * N; i++) {
+    const keep = Math.max(0, Math.min(1, (heights[i] - SEA_LEVEL - 0.2) / 0.8));
+    groundInfluence[i * 4 + 2] = Math.round(groundInfluence[i * 4 + 2] * keep);
+    groundInfluence[i * 4 + 3] = Math.round(groundInfluence[i * 4 + 3] * keep);
+  }
   for (let z = 0; z < N; z++)
     for (let x = 0; x < N; x++) {
       const i = z * N + x,
